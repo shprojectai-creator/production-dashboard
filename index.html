@@ -666,7 +666,7 @@ const firebaseConfig = {
       아래 목록과 보안 규칙의 목록을 반드시 동일하게 유지하세요.
 ═══════════════════════════════════════════════════════════ */
 const EDITORS = [
-  "sh.project.ai@gmail.com",            // ← 편집 담당자 이메일로 교체 (10명 이내 권장)
+  "sh.project.ai@gmail.com",
   "kortoeng@gmail.com",
 ];
 
@@ -1135,9 +1135,15 @@ window.doGoogleLogin = async ()=>{
     err.textContent = '로그인 실패: ' + (e.message || e.code || '');
   }
 };
-function loadScript(src){
+function loadScript(src, timeoutMs){
   return new Promise((res,rej)=>{
-    const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej;
+    const s=document.createElement('script');
+    let done=false;
+    const finish=(ok,err)=>{ if(done) return; done=true; clearTimeout(t); ok?res():rej(err||new Error('load error: '+src)); };
+    const t=setTimeout(()=>finish(false,new Error('timeout: '+src)), timeoutMs||15000);
+    s.src=src;
+    s.onload=()=>finish(true);
+    s.onerror=()=>finish(false);
     document.head.appendChild(s);
   });
 }
@@ -1638,15 +1644,43 @@ window.onEdit = (id)=>{
 
 /* ════════ PO 파일(PDF/HTML) 자동 인식 ════════ */
 let pdfReady = false;
+/* pdf.js 로딩 — CDN 여러 곳을 순서대로 시도하고, 워커 실패 시 워커 없이 동작 */
+const PDFJS_SOURCES = [
+  { lib:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+    worker:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
+  { lib:'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
+    worker:'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
+  { lib:'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js',
+    worker:'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
+];
 async function ensurePdfJs(){
-  if(pdfReady) return;
-  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  pdfReady = true;
+  if(pdfReady && window.pdfjsLib) return;
+  let lastErr = null;
+  for(const src of PDFJS_SOURCES){
+    try{
+      if(!window.pdfjsLib) await loadScript(src.lib);
+      if(window.pdfjsLib){
+        try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc = src.worker; }catch(e){}
+        pdfReady = true;
+        return;
+      }
+    }catch(e){ lastErr = e; }
+  }
+  throw new Error('PDF 라이브러리를 불러오지 못했습니다. 인터넷 연결 또는 사내 방화벽(cdnjs / jsdelivr / unpkg 차단)을 확인하세요.'
+    + (lastErr ? '' : ''));
+}
+async function getPdfDoc(bytes){
+  // 1차: 워커 사용 / 2차: 워커 없이(사내망에서 워커 차단 시 대비)
+  try{
+    return await window.pdfjsLib.getDocument({data:bytes}).promise;
+  }catch(e){
+    try{
+      return await window.pdfjsLib.getDocument({data:bytes, disableWorker:true, isEvalSupported:false}).promise;
+    }catch(e2){ throw e; }
+  }
 }
 async function pdfToLines(buf){
-  const pdf = await window.pdfjsLib.getDocument({data:buf}).promise;
+  const pdf = await getPdfDoc(new Uint8Array(buf));   // ArrayBuffer 분리(detach) 방지
   const lines = [];
   for(let pg=1; pg<=pdf.numPages; pg++){
     const page = await pdf.getPage(pg);
@@ -1733,10 +1767,12 @@ function extractHwRow(tables, lines){
   return {name:'', qty:0};
 }
 function extractPO(lineText, lines, tables){
-  const po = (lineText.match(/purchase\s*order\s*no\.?\s*[:\-]?\s*([A-Za-z0-9][\w\-\/]*)/i)||[])[1] || '';
-  const recv = parseDate(grab(lineText, 'date\\s*issued'));
-  const branch = grab(lineText, 'branch');
-  const due = parseDate(grab(lineText, 'delivery\\s*time'));
+  // 영문 라벨 + 한국어/일본어 라벨 모두 인식
+  const poRe = /(?:purchase\s*order\s*no|p\/?o\s*no|order\s*no|발\s*주\s*번\s*호|주\s*문\s*번\s*호|PO\s*번호|注文番号)\.?\s*[:\-]?\s*([A-Za-z0-9][\w\-\/]*)/i;
+  const po = (lineText.match(poRe)||[])[1] || '';
+  const recv = parseDate(grab(lineText, '(?:date\\s*issued|issue\\s*date|order\\s*date|발\\s*행\\s*일|발\\s*주\\s*일|접\\s*수\\s*일|作成日|発行日)'));
+  const branch = grab(lineText, '(?:branch|지\\s*사|지\\s*점|담당\\s*지사|요청\\s*지사|支社|支店)');
+  const due = parseDate(grab(lineText, '(?:delivery\\s*time|delivery\\s*date|due\\s*date|납\\s*기\\s*일|납\\s*기|인\\s*도\\s*일|출하\\s*납기|納期)'));
   const hw = extractHwRow(tables, lines);
   const hwItems = extractHwItems(lines, tables);
   return {po, recv, branch, due, name:hw.name, qty:hw.qty, hwItems};
@@ -1787,10 +1823,16 @@ window.onImportFile = async (e)=>{
   status.className = 'importStatus'; status.textContent = tr('파일 분석 중...');
   try{
     let lines=[], tables=[], lineText='';
-    if(/\.pdf$/i.test(file.name)){
+    if(/\.pdf$/i.test(file.name) || file.type === 'application/pdf'){
+      status.textContent = 'PDF ' + tr('파일 분석 중...');
       await ensurePdfJs();
       lines = await pdfToLines(await file.arrayBuffer());
       lineText = lines.join('\n');
+      if(!lines.length){
+        status.className='importStatus warn';
+        status.textContent = '⚠ PDF에서 텍스트를 찾을 수 없습니다.\n스캔(이미지)으로 만들어진 PDF는 자동 인식이 불가능합니다.\n원본 PDF를 사용하거나 직접 입력해 주세요.';
+        return;
+      }
     }else{
       const parsed = parseHtmlFile(await file.text());
       lines = parsed.lines; tables = parsed.tables; lineText = parsed.lineText;
@@ -1813,12 +1855,33 @@ window.onImportFile = async (e)=>{
       status.textContent = `✓ ${tr('자동 입력됨')}: ${done.join(', ')}\n${tr('(내용을 확인하고 필요 시 직접 수정하세요)')}`;
     }else{
       status.className='importStatus warn';
-      status.textContent = '⚠ ' + tr('인식된 항목이 없습니다. 파일 형식을 확인하거나 직접 입력하세요.');
+      window._lastImportLines = lines;   // 진단용 보관
+      const preview = lines.slice(0,5).join('\n').slice(0,300);
+      status.innerHTML = '⚠ ' + esc(tr('인식된 항목이 없습니다. 파일 형식을 확인하거나 직접 입력하세요.'))
+        + `<br><br><b>파일에서 읽은 내용 (앞부분):</b><br>`
+        + `<span style="color:var(--sub);font-size:11px">${esc(preview)}…</span>`
+        + `<br><button type="button" class="hbtn" style="margin-top:8px;padding:6px 12px;font-size:11px"
+             onclick="showImportDump()">📋 읽은 내용 전체 보기 (복사용)</button>`;
     }
   }catch(err){
     status.className='importStatus warn';
-    status.textContent = '⚠ ' + tr('분석 실패') + ': ' + err.message;
+    status.textContent = '⚠ ' + tr('분석 실패') + ': ' + (err && err.message ? err.message : err);
+    console.error('PO 파일 분석 오류:', err);
   }
+};
+/* 진단용: PDF/HTML에서 읽어들인 원문 전체 보기 */
+window.showImportDump = ()=>{
+  const lines = window._lastImportLines || [];
+  const w = window.open('', '_blank');
+  if(!w){ alert('팝업이 차단되었습니다. 팝업을 허용해 주세요.'); return; }
+  w.document.write('<meta charset="utf-8"><title>PO 파일 읽은 내용</title>'
+    + '<body style="font-family:monospace;background:#0E1319;color:#E8EDF2;padding:24px;line-height:1.6">'
+    + '<h3>PO 파일에서 읽어들인 내용 (' + lines.length + '줄)</h3>'
+    + '<p style="color:#8A97A6;font-size:13px">이 내용을 복사해서 전달해 주시면 인식 규칙을 맞춰드릴 수 있습니다.</p>'
+    + '<pre style="white-space:pre-wrap;background:#161E28;padding:16px;border-radius:8px">'
+    + lines.map((l,i)=>String(i).padStart(3,' ')+' | '+l.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))).join('\n')
+    + '</pre></body>');
+  w.document.close();
 };
 /* ════════════════════════════════════════════ */
 document.getElementById('addBtn').onclick=()=>{
