@@ -1,0 +1,2192 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>생산 현황 모니터링</title>
+<style>
+  :root{
+    --bg:#0E1319; --panel:#161E28; --panel2:#1C2632; --line:#26313F;
+    --txt:#E8EDF2; --sub:#8A97A6; --dim:#5A6675;
+    --amber:#F5A524; --blue:#4C9EEB; --violet:#9B7BEF; --green:#2FBF71; --red:#F04B4B; --teal:#2FBFB0;
+    --radius:14px;
+    --hdr1:#131A23; --hdr2:#0E1319; --nodeTxt:#10161D; --shade:rgba(5,8,12,.72);
+  }
+  /* ── 밝음 모드 ── */
+  body.light{
+    --bg:#EEF1F5; --panel:#FFFFFF; --panel2:#F0F3F7; --line:#D7DEE7;
+    --txt:#1B2430; --sub:#5B6775; --dim:#93A0AE;
+    --amber:#D98E0B; --blue:#2C7FD4; --violet:#7C5BE0; --green:#1FA35C; --red:#DC3A3A; --teal:#12A091;
+    --hdr1:#FFFFFF; --hdr2:#F3F5F8; --nodeTxt:#FFFFFF; --shade:rgba(35,44,55,.45);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--txt);
+    font-family:'Pretendard','Malgun Gothic','Apple SD Gothic Neo','Segoe UI',sans-serif;
+    font-variant-numeric:tabular-nums;
+    overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  main{flex:1; min-height:0; display:flex; flex-direction:column}
+
+  /* ── Header ─────────────────────────── */
+  header{
+    display:flex; align-items:center; gap:20px;
+    padding:14px 28px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--hdr1),var(--hdr2));
+  }
+  .brand{display:flex; align-items:center; gap:14px}
+  .brand .lamp{
+    width:14px;height:14px;border-radius:50%;
+    background:var(--dim); box-shadow:none;
+    animation:pulse 2.4s infinite;
+  }
+  .brand .lamp.online{background:var(--green); box-shadow:0 0 14px var(--green)}
+  .brand .lamp.offline{background:var(--red); box-shadow:0 0 14px var(--red); animation:none}
+  .connlabel{
+    font-size:11px; font-weight:800; letter-spacing:1px; padding:3px 9px; border-radius:20px;
+    border:1px solid var(--dim); color:var(--dim);
+  }
+  .connlabel.online{color:var(--green); border-color:var(--green); background:rgba(47,191,113,.1)}
+  .connlabel.offline{color:var(--red); border-color:var(--red); background:rgba(240,75,75,.1)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+  .brand h1{font-size:20px; font-weight:800; letter-spacing:-.3px}
+  .brand small{display:block; font-size:11px; color:var(--sub); font-weight:500; letter-spacing:2px; margin-top:2px}
+  .clock{margin-left:auto; text-align:right}
+  .clock .time{font-size:22px; font-weight:700; letter-spacing:1px}
+  .clock .date{font-size:12px; color:var(--sub)}
+  .hbtn{
+    background:var(--panel2); color:var(--txt); border:1px solid var(--line);
+    padding:10px 16px; border-radius:10px; font-size:13px; font-weight:600;
+    cursor:pointer; transition:.15s; white-space:nowrap;
+  }
+  .hbtn:hover{border-color:var(--amber); color:var(--amber)}
+  .hbtn.primary{background:var(--amber); color:var(--nodeTxt); border-color:var(--amber)}
+  .hbtn.primary:hover{filter:brightness(1.08); color:var(--nodeTxt)}
+  select#langSel{
+    appearance:none; -webkit-appearance:none; cursor:pointer;
+    padding-right:14px; font-family:inherit;
+  }
+  select#langSel option{background:var(--panel); color:var(--txt)}
+  .sync{font-size:11px; color:var(--dim); display:flex; align-items:center; gap:6px}
+  .sync .dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+  .sync.on .dot{background:var(--green); box-shadow:0 0 8px var(--green)}
+  .sync.on{color:var(--green)}
+  .editBadge{
+    display:none; font-size:11px; font-weight:800; padding:5px 12px; border-radius:20px;
+    background:rgba(245,165,36,.15); color:var(--amber); border:1px solid var(--amber);
+    letter-spacing:.5px; white-space:nowrap;
+  }
+  body.edit .editBadge{display:inline-block; animation:pulse 2.4s infinite}
+  /* 보기 모드(기본): 편집 관련 UI 숨김 */
+  body:not(.edit) #addBtn, body:not(.edit) #stageBtn, body:not(.edit) #codeBtn, body:not(.edit) #detailEditBtn, body:not(.edit) #detailDelBtn, body:not(.edit) .actions{display:none}
+  /* 언어 버튼 토글은 편집 모드에서만 보임 */
+  body:not(.edit) #langToggleBtn{display:none}
+  /* 언어 선택 비활성 시: 일반 모드에서 숨김 (편집 모드에서는 보임) */
+  body.lang-off:not(.edit) #langSel{display:none}
+  body:not(.edit) .step{cursor:default}
+
+  /* ── Tabs ───────────────────────────── */
+  .tabs{
+    display:flex; gap:6px; padding:12px 28px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .tab{
+    padding:12px 22px; font-size:14.5px; font-weight:700;
+    color:color-mix(in srgb, var(--tc,var(--amber)) 62%, var(--sub));
+    background:transparent; border:1px solid transparent; border-bottom:none;
+    border-top:3px solid color-mix(in srgb, var(--tc,var(--amber)) 45%, transparent);
+    border-radius:12px 12px 0 0; cursor:pointer; transition:.15s;
+    position:relative; top:1px;
+  }
+  .tab:hover{
+    color:var(--tc,var(--amber));
+    background:color-mix(in srgb, var(--tc,var(--amber)) 8%, transparent);
+  }
+  .tab.on{
+    color:var(--tc,var(--amber));
+    background:color-mix(in srgb, var(--tc,var(--amber)) 14%, var(--panel));
+    border-color:var(--line); border-top-color:var(--tc,var(--amber));
+    border-bottom:1px solid transparent;
+  }
+  .tab .cnt{
+    display:inline-block; margin-left:7px; font-size:11px; font-weight:800;
+    background:color-mix(in srgb, var(--tc,var(--amber)) 15%, transparent);
+    color:var(--tc,var(--amber)); padding:2px 8px; border-radius:12px;
+  }
+  .tab.on .cnt{background:color-mix(in srgb,var(--tc,var(--amber)) 26%,transparent); color:var(--tc,var(--amber))}
+  .tools{margin-left:auto; display:flex; align-items:center; gap:12px; padding-bottom:8px; flex-wrap:wrap; justify-content:flex-end}
+  .tools #searchBox{
+    background:var(--panel2); border:1px solid var(--line); border-radius:9px;
+    padding:9px 14px; color:var(--txt); font-size:13px; font-family:inherit; width:250px;
+  }
+  .tools #searchBox:focus{outline:none; border-color:var(--amber)}
+  .daterange{
+    display:flex; align-items:center; gap:6px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:9px; padding:5px 9px;
+  }
+  .daterange .drlabel{font-size:12px; font-weight:700; color:var(--sub); white-space:nowrap}
+  .daterange input[type=date]{
+    background:transparent; border:none; color:var(--txt); font-size:12.5px; font-family:inherit;
+    padding:3px 2px; color-scheme:dark;
+  }
+  body.light .daterange input[type=date]{color-scheme:light}
+  .daterange input[type=date]:focus{outline:none}
+  .daterange .drtilde{color:var(--dim); font-size:12px}
+  .daterange .drclear{
+    background:transparent; border:none; color:var(--dim); cursor:pointer; font-size:12px;
+    padding:2px 4px; border-radius:5px;
+  }
+  .daterange .drclear:hover{color:var(--red)}
+  .daterange.active{border-color:var(--amber)}
+  .daterange.active .drlabel{color:var(--amber)}
+  .pageinfo{font-size:12px; color:var(--sub); font-weight:600; white-space:nowrap}
+  .badge.hist{background:rgba(155,123,239,.15); color:var(--violet)}
+  .board.scroll{overflow-y:auto}
+  .searchNote{grid-column:1/-1; font-size:12.5px; color:var(--sub); padding:2px 4px}
+
+  /* ── Summary ────────────────────────── */
+  .summary{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:14px; padding:18px 28px 4px;
+  }
+  .stat{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px 18px; position:relative; overflow:hidden;
+    cursor:pointer; user-select:none; transition:border-color .15s, transform .1s;
+  }
+  .stat:hover{border-color:var(--c,var(--sub))}
+  .stat:active{transform:scale(.98)}
+  .stat.sel{border-color:var(--c,var(--amber)); box-shadow:0 0 0 1px var(--c,var(--amber)) inset}
+  .stat.sel::after{
+    content:'✓ 필터 적용'; position:absolute; top:10px; right:12px;
+    font-size:10px; font-weight:800; color:var(--c,var(--amber));
+  }
+  .stat::before{content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--c,var(--dim))}
+  .stat .label{font-size:12px; color:var(--sub); font-weight:600}
+  .stat .value{font-size:30px; font-weight:800; margin-top:3px; color:var(--c,var(--txt))}
+  .stat .unit{font-size:14px; color:var(--sub); font-weight:500; margin-left:3px}
+
+  /* ── Board ──────────────────────────── */
+  /* 세로형 카드 그리드 (메인 대시보드 스타일) — 화면 폭에 맞춰 열 수 자동 */
+  .board{
+    padding:16px 28px 24px; flex:1; min-height:0;
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));
+    grid-auto-rows:min-content; gap:16px; overflow-y:auto;
+  }
+  .board.scroll{grid-auto-rows:min-content}
+  /* ── 메인 대시보드 (홈) ── */
+  .board.home{grid-template-columns:1fr; grid-auto-rows:min-content; gap:16px; overflow-y:auto}
+  .hbanner{
+    grid-column:1/-1; padding:14px 22px; border-radius:12px; font-size:15px; font-weight:700;
+    display:flex; align-items:center; gap:10px;
+  }
+  .hbanner b{font-size:17px}
+  .hbanner.warn{background:rgba(240,75,75,.12); color:var(--red); border:1px solid rgba(240,75,75,.4)}
+  .hbanner.ok{background:rgba(47,191,113,.1); color:var(--green); border:1px solid rgba(47,191,113,.35)}
+  .hpanels{
+    grid-column:1/-1; display:grid; grid-template-columns:repeat(3,1fr); gap:16px;
+  }
+  @media(max-width:1100px){ .hpanels{grid-template-columns:1fr} }
+  .hpanel{
+    background:var(--panel); border:1px solid var(--line); border-top:4px solid var(--pc);
+    border-radius:var(--radius); padding:18px 20px; cursor:pointer;
+    transition:border-color .15s, transform .1s; display:flex; flex-direction:column; gap:14px;
+  }
+  .hpanel:hover{transform:translateY(-2px)}
+  .hpanel:hover .hgo{color:var(--pc)}
+  .hhead{display:flex; align-items:center; justify-content:space-between}
+  .htitle{font-size:17px; font-weight:800; color:var(--pc)}
+  .htotal{font-size:30px; font-weight:800}
+  .htotal span{font-size:13px; color:var(--sub); font-weight:600; margin-left:3px}
+  .hbars{display:grid; grid-template-columns:repeat(4,1fr); gap:8px}
+  .hstat{
+    background:var(--panel2); border-radius:9px; padding:9px 6px; text-align:center;
+    border-left:3px solid var(--sc);
+  }
+  .hstat b{display:block; font-size:20px; font-weight:800; color:var(--sc)}
+  .hstat span{font-size:11px; color:var(--sub); font-weight:600}
+  .hprog-top{display:flex; justify-content:space-between; font-size:12px; color:var(--sub); font-weight:600; margin-bottom:5px}
+  .hprog-top b{color:var(--txt); font-size:13px}
+  .hpbar{height:8px; background:var(--panel2); border-radius:6px; overflow:hidden}
+  .hpbar i{display:block; height:100%; background:linear-gradient(90deg,var(--pc),var(--green)); border-radius:6px; transition:width .5s}
+  .hlist-title{font-size:12.5px; font-weight:700; color:var(--sub); display:flex; align-items:center; gap:8px; border-top:1px dashed var(--line); padding-top:12px}
+  .hlate{background:rgba(240,75,75,.15); color:var(--red); font-size:11px; padding:2px 8px; border-radius:20px}
+  .hlist{display:flex; flex-direction:column; gap:2px; min-height:0; max-height:220px; overflow-y:auto}
+  .hrow{display:flex; align-items:center; gap:9px; font-size:13px; padding:6px 2px; border-bottom:1px solid var(--line)}
+  .hrow:last-child{border-bottom:none}
+  .hrow .hdot{width:8px; height:8px; border-radius:50%; flex-shrink:0; background:var(--blue)}
+  .hrow.late .hdot{background:var(--red)}
+  .hrow.wait .hdot{background:var(--sub)}
+  .hrow.done .hdot{background:var(--green)}
+  .hrow .hst{
+    font-size:10.5px; font-weight:800; padding:2px 8px; border-radius:20px;
+    white-space:nowrap; flex-shrink:0; width:46px; text-align:center;
+  }
+  .hst.run{background:rgba(76,158,235,.15); color:var(--blue)}
+  .hst.wait{background:rgba(138,151,166,.14); color:var(--sub)}
+  .hst.late{background:rgba(240,75,75,.15); color:var(--red)}
+  .hst.done{background:rgba(47,191,113,.15); color:var(--green)}
+  .hrow .hname{font-weight:600; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0}
+  .hrow.done .hname{color:var(--sub)}
+  .hrow .hstage{font-size:11.5px; color:var(--sub); background:var(--panel2); padding:2px 9px; border-radius:20px; white-space:nowrap}
+  .hrow .hdue{font-size:11.5px; color:var(--sub); width:44px; text-align:right; flex-shrink:0; font-variant-numeric:tabular-nums}
+  .hrow.late .hdue{color:var(--red); font-weight:700}
+  .hempty{font-size:12.5px; color:var(--dim); padding:8px 0}
+  .hgo{font-size:12.5px; font-weight:700; color:var(--sub); text-align:right; margin-top:auto; transition:color .15s}
+  body.fs .board{overflow-y:hidden}                     /* 전체화면: 자동 스크롤 전용 */
+  body.fs .board::-webkit-scrollbar{display:none}
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-top:4px solid var(--cstatus,var(--line));
+    border-radius:var(--radius); padding:16px 18px;
+    display:flex; flex-direction:column; gap:12px; min-width:0;
+    transition:border-color .15s, transform .1s;
+  }
+  .card.clickable{cursor:pointer}
+  .card.clickable:hover{transform:translateY(-2px); border-color:var(--cstatus)}
+  .card.done{opacity:.7}
+  .card.late{border-color:rgba(240,75,75,.45)}
+  .vhead{display:flex; align-items:flex-start; justify-content:space-between; gap:10px}
+  .vhead-l{min-width:0}
+  .card .name{font-size:17px; font-weight:700; letter-spacing:-.2px; word-break:break-all}
+  .card .code{font-size:12.5px; font-weight:700; color:var(--tc,var(--amber)); margin-bottom:3px; letter-spacing:.3px}
+  .card .meta{
+    display:grid; grid-template-columns:1fr 1fr; gap:10px 16px;
+    background:var(--panel2); border-radius:9px; padding:11px 13px;
+  }
+  .mcell{min-width:0}
+  .mlabel{font-size:12px; color:var(--sub); font-weight:600; margin-bottom:2px}
+  .mvalue{font-size:16px; color:var(--txt); font-weight:700; word-break:break-all; line-height:1.3}
+  .badge{
+    display:inline-block; font-size:11px; font-weight:700; padding:3px 9px;
+    border-radius:20px; white-space:nowrap; flex-shrink:0;
+  }
+  .badge.run{background:rgba(76,158,235,.15); color:var(--blue)}
+  .badge.done{background:rgba(47,191,113,.15); color:var(--green)}
+  .badge.late{background:rgba(240,75,75,.15); color:var(--red)}
+  .badge.wait{background:rgba(138,151,166,.12); color:var(--sub)}
+
+  /* 공정 스텝 트랙 */
+  .track{display:flex; align-items:flex-start}
+  .step{flex:1; display:flex; flex-direction:column; align-items:center; position:relative; cursor:pointer; user-select:none}
+  .step .bar{
+    position:absolute; top:13px; left:-50%; width:100%; height:3px;
+    background:var(--line); z-index:0;
+  }
+  .step:first-child .bar{display:none}
+  .step .node{
+    width:28px; height:28px; border-radius:50%; z-index:1;
+    background:var(--panel2); border:2px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:800; color:var(--dim); transition:.2s;
+  }
+  .step .sname{font-size:11.5px; color:var(--dim); margin-top:6px; font-weight:600; white-space:nowrap}
+  /* 영어: 단계명이 길어 2줄까지 줄바꿈 표시 */
+  body[data-lang="en"] .step .sname{
+    white-space:normal; text-align:center; line-height:1.25;
+    max-width:82px; word-break:keep-all;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+    min-height:2.5em;
+  }
+  body[data-lang="en"] .step .sdate{margin-top:3px}
+  .step .sdate{font-size:10.5px; color:var(--dim); margin-top:2px; white-space:nowrap}
+  .step.on .node{background:var(--c); border-color:var(--c); color:var(--nodeTxt)}
+  .step.on .bar{background:var(--c)}
+  .step.on .sname{color:var(--txt)}
+  .step.on .sdate{color:var(--sub)}
+  .step.cur .node{box-shadow:0 0 0 5px color-mix(in srgb,var(--c) 22%, transparent), 0 0 16px var(--c); animation:pulse 2s infinite}
+  .step:hover .node{border-color:var(--c); color:var(--c)}
+  .step.on:hover .node{color:var(--nodeTxt)}
+
+  /* 수량 진행 */
+  .qty .nums{font-size:14px; font-weight:700; display:flex; justify-content:space-between; margin-bottom:7px}
+  .qty .nums span{color:var(--sub); font-weight:500; font-size:12px}
+  .qty .pbar{height:8px; background:var(--panel2); border-radius:6px; overflow:hidden}
+  .qty .pbar i{display:block; height:100%; background:linear-gradient(90deg,var(--blue),var(--green)); border-radius:6px; transition:width .4s}
+
+  .actions{display:flex; gap:8px; justify-content:flex-end; margin-top:auto}
+  .icon-btn{
+    width:34px; height:34px; border-radius:9px; border:1px solid var(--line);
+    background:transparent; color:var(--sub); cursor:pointer; font-size:15px; transition:.15s;
+  }
+  .icon-btn:hover{border-color:var(--amber); color:var(--amber)}
+  .icon-btn.del:hover{border-color:var(--red); color:var(--red)}
+
+  .empty{
+    grid-column:1/-1; grid-row:1/-1; align-self:center;
+    text-align:center; padding:70px 20px; color:var(--sub); font-size:15px;
+    border:1px dashed var(--line); border-radius:var(--radius);
+  }
+  .empty b{color:var(--txt)}
+
+  /* ── Modal ─────────────────────────── */
+  .overlay{
+    position:fixed; inset:0; background:var(--shade); z-index:100;
+    display:none; align-items:center; justify-content:center; padding:20px;
+  }
+  .overlay.show{display:flex}
+  .modal{
+    background:var(--panel); border:1px solid var(--line); border-radius:16px;
+    width:100%; max-width:480px; padding:26px;
+    max-height:85vh; overflow-y:auto;   /* 화면 높이의 85% · 넘치면 팝업 전체 스크롤 */
+  }
+  /* 추가/수정 모달: 높이 화면의 60% · 팝업 전체를 세로 스크롤 */
+  .modal.modal-scroll{display:block; max-height:60vh; overflow-y:auto; padding-bottom:26px}
+  .modal.modal-scroll .modal-fields{overflow:visible}
+  .modal.modal-scroll .btns{
+    margin-top:16px; padding-top:16px; border-top:1px solid var(--line);
+  }
+  .modal h2{font-size:17px; font-weight:800; margin-bottom:20px}
+  .field{margin-bottom:14px}
+  .field label{display:block; font-size:12px; color:var(--sub); font-weight:600; margin-bottom:6px}
+  .field input,.field select{
+    width:100%; background:var(--panel2); border:1px solid var(--line); border-radius:9px;
+    padding:11px 13px; color:var(--txt); font-size:14px; font-family:inherit;
+  }
+  .field input:focus,.field select:focus{outline:none; border-color:var(--amber)}
+  .row2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  .importBox{
+    border:1px dashed var(--amber); border-radius:11px; padding:14px;
+    margin-bottom:16px; text-align:center; background:rgba(245,165,36,.06);
+  }
+  .importLabel{
+    display:inline-block; background:var(--amber); color:var(--nodeTxt);
+    font-size:13px; font-weight:700; padding:9px 18px; border-radius:9px; cursor:pointer;
+  }
+  .importLabel:hover{filter:brightness(1.08)}
+  .importStatus{font-size:11.5px; color:var(--sub); margin-top:9px; line-height:1.5; white-space:pre-wrap}
+  .importStatus.ok{color:var(--green); font-weight:600}
+  .importStatus.warn{color:var(--red); font-weight:600}
+  .modal .btns{display:flex; gap:10px; margin-top:22px}
+  .modal .btns .hbtn{flex:1; padding:12px}
+
+  /* 카드 확대 팝업 */
+  .detailModal{max-width:620px; max-height:60vh; overflow-y:auto}
+  .dtop{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:8px}
+  .dcode{font-size:14px; font-weight:800; letter-spacing:.3px; margin-bottom:4px}
+  .dname{font-size:22px; font-weight:800; letter-spacing:-.3px; word-break:break-all}
+  .dsection{font-size:12px; font-weight:800; color:var(--sub); letter-spacing:.5px;
+    border-top:1px dashed var(--line); padding-top:14px; margin:18px 0 10px}
+  .dgrid{display:grid; grid-template-columns:1fr 1fr; gap:8px 18px}
+  .drow{display:flex; gap:8px; font-size:14px; padding:4px 0; min-width:0}
+  .drow b{color:var(--sub); font-weight:700; font-size:12.5px; min-width:82px; flex-shrink:0; padding-top:1px}
+  .drow span{color:var(--txt); word-break:break-all}
+  .dstages{display:flex; flex-direction:column; gap:2px}
+  .dstage{display:flex; align-items:center; gap:12px; padding:9px 4px; border-radius:8px}
+  .dstage .dnode{
+    width:26px; height:26px; border-radius:50%; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800;
+    background:var(--panel2); border:2px solid var(--line); color:var(--dim);
+  }
+  .dstage.on .dnode{background:var(--c); border-color:var(--c); color:var(--nodeTxt)}
+  .dstage.cur{background:color-mix(in srgb,var(--c) 10%, transparent)}
+  .dstage .dsname{flex:1; font-size:14.5px; font-weight:600; color:var(--sub)}
+  .dstage.on .dsname{color:var(--txt)}
+  .dstage .ddate{font-size:12.5px; color:var(--sub); font-variant-numeric:tabular-nums}
+  .dnote{font-size:14px; color:var(--txt); white-space:pre-wrap; word-break:break-word;
+    background:var(--panel2); border-radius:9px; padding:13px 15px; line-height:1.55; max-height:220px; overflow:auto}
+  @media(max-width:560px){ .dgrid{grid-template-columns:1fr} }
+
+  /* 비고란 (카드 하단) */
+  .notes{
+    display:grid; grid-template-columns:1fr; gap:8px 14px;
+    border-top:1px dashed var(--line); padding-top:9px;
+  }
+  .note{font-size:12.5px; color:var(--sub); display:flex; gap:7px; min-width:0}
+  .note b{color:var(--dim); font-weight:700; flex-shrink:0; font-size:11.5px; padding-top:1px}
+  .note span{white-space:pre-wrap; word-break:break-word; max-height:4.6em; overflow:auto; flex:1}
+  .note .noteEmpty{color:var(--dim); opacity:.55}
+  .noteArea{
+    width:100%; min-height:110px; resize:vertical; background:var(--panel2);
+    border:1px solid var(--line); border-radius:9px; padding:11px 13px;
+    color:var(--txt); font-size:13px; font-family:inherit; line-height:1.5; white-space:pre-wrap;
+  }
+  .noteArea:focus{outline:none; border-color:var(--amber)}
+
+  /* H/W Components 표 (카드/팝업 표시용) */
+  .hwtable{border:1px solid var(--line); border-radius:9px; overflow:hidden; font-size:12.5px}
+  .hwt-h{display:grid; grid-template-columns:1fr 64px; background:var(--panel2);
+    font-weight:700; color:var(--sub); font-size:11.5px}
+  .hwt-h span{padding:6px 10px}
+  .hwt-h span:last-child{text-align:right}
+  .hwt-r{display:grid; grid-template-columns:1fr 64px; border-top:1px solid var(--line)}
+  .hwt-r span{padding:6px 10px; word-break:break-word}
+  .hwt-r .hwt-q{text-align:right; font-weight:700; color:var(--txt); font-variant-numeric:tabular-nums}
+  .hwt-d{color:var(--txt)}
+  .hwtable.big{font-size:14px}
+  .hwtable.big .hwt-h span, .hwtable.big .hwt-r span{padding:9px 13px}
+  .hwtable.big .hwt-h{font-size:12.5px}
+
+  /* H/W Components 편집기 (모달) */
+  .hwedit-head{display:grid; grid-template-columns:1fr 90px 34px; gap:8px; font-size:11px; color:var(--sub); font-weight:700; padding:0 2px 6px}
+  .hwedit-head span:nth-child(2){text-align:center}
+  .hwrow{display:grid; grid-template-columns:1fr 90px 34px; gap:8px; margin-bottom:8px}
+  .hwrow input{background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:9px 11px; color:var(--txt); font-size:13px; font-family:inherit}
+  .hwrow input:focus{outline:none; border-color:var(--amber)}
+
+  /* ── Fullscreen mode ───────────────── */
+  body.fs .actions, body.fs #addBtn, body.fs #stageBtn, body.fs #codeBtn{display:none}
+  body.fs .card{padding:18px 22px}
+  body.fs .card .name{font-size:20px}
+  body.fs .step .node{width:32px;height:32px;font-size:13px}
+  body.fs .step .sname{font-size:13px}
+  body.fs .step .sdate{font-size:12px}
+  body.fs .stat .value{font-size:36px}
+  body.fs .note{font-size:14px}
+
+  @media(max-width:900px){
+    .clock{display:none}
+    header{flex-wrap:wrap; gap:12px}
+    .tabs{overflow-x:auto}
+  }
+  ::-webkit-scrollbar{width:10px}
+  ::-webkit-scrollbar-thumb{background:var(--line); border-radius:5px}
+  @media (prefers-reduced-motion: reduce){ *{animation:none!important; transition:none!important} }
+
+  /* ── 로그인 화면 ── */
+  .loginOverlay{
+    position:fixed; inset:0; z-index:500; display:none;
+    align-items:center; justify-content:center; padding:20px;
+    background:linear-gradient(160deg,var(--hdr1),var(--bg));
+  }
+  .loginOverlay.show{display:flex}
+  body.locked > header, body.locked > .tabs, body.locked > main{filter:blur(3px); pointer-events:none}
+  .loginBox{
+    background:var(--panel); border:1px solid var(--line); border-radius:18px;
+    padding:40px 36px; max-width:400px; width:100%; text-align:center;
+    box-shadow:0 20px 60px rgba(0,0,0,.35);
+  }
+  .loginLamp{
+    width:16px; height:16px; border-radius:50%; margin:0 auto 18px;
+    background:var(--amber); box-shadow:0 0 18px var(--amber); animation:pulse 2.4s infinite;
+  }
+  .loginBox h1{font-size:22px; font-weight:800; letter-spacing:-.3px}
+  .loginBox small{display:block; font-size:11px; color:var(--sub); letter-spacing:2px; margin-top:4px}
+  .loginDesc{font-size:13.5px; color:var(--sub); line-height:1.7; margin:24px 0 20px}
+  .googleBtn{
+    width:100%; display:flex; align-items:center; justify-content:center; gap:10px;
+    background:#fff; color:#1F1F1F; border:1px solid #DADCE0; border-radius:10px;
+    padding:13px 18px; font-size:14.5px; font-weight:700; cursor:pointer;
+    font-family:inherit; transition:.15s;
+  }
+  .googleBtn:hover{background:#F7F8F8; box-shadow:0 2px 8px rgba(0,0,0,.15)}
+  .loginError{font-size:12.5px; color:var(--red); margin-top:14px; min-height:1em; word-break:break-all}
+  .loginNote{font-size:11.5px; color:var(--dim); line-height:1.7; margin-top:22px;
+    border-top:1px solid var(--line); padding-top:18px}
+
+  /* ── 헤더 사용자 정보 ── */
+  .userBox{display:flex; align-items:center; gap:9px}
+  .userBox img{width:28px; height:28px; border-radius:50%; border:1px solid var(--line)}
+  .userBox .uname{font-size:12.5px; font-weight:600; color:var(--txt); max-width:130px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .userBox .urole{
+    font-size:10.5px; font-weight:800; padding:3px 8px; border-radius:20px;
+    background:rgba(138,151,166,.15); color:var(--sub); white-space:nowrap;
+  }
+  .userBox .urole.ed{background:rgba(245,165,36,.15); color:var(--amber)}
+  .userBox .hbtn{padding:7px 12px; font-size:12px}
+
+  /* ── 코드 편집 모드 ── */
+  .codeOverlay{
+    position:fixed; inset:0; background:var(--bg); z-index:200;
+    display:none; flex-direction:column;
+  }
+  .codeOverlay.show{display:flex}
+  .codeBar{
+    display:flex; align-items:center; gap:12px; padding:14px 22px;
+    border-bottom:1px solid var(--line); background:var(--panel);
+  }
+  .codeBar h2{font-size:16px; font-weight:800; margin-right:auto}
+  .codeBar .status{font-size:12px; color:var(--sub); margin-right:auto}
+  .codeArea{flex:1; min-height:0; display:flex}
+  .codeArea textarea{
+    flex:1; width:100%; height:100%; resize:none; border:none; outline:none;
+    background:#0B0F14; color:#CFE3F5; padding:18px 22px;
+    font-family:'SFMono-Regular','Consolas','Menlo',monospace; font-size:13px; line-height:1.55;
+    tab-size:2; white-space:pre; overflow:auto;
+  }
+  body.light .codeArea textarea{background:#F7F9FB; color:#1B2430}
+  .codeHint{padding:8px 22px; font-size:11.5px; color:var(--dim); border-top:1px solid var(--line); background:var(--panel)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="lamp" id="connLamp"></div>
+    <div>
+      <h1 id="pageTitle">생산 현황 모니터링</h1>
+      <small>PRODUCTION STATUS BOARD</small>
+    </div>
+    <span class="connlabel" id="connLabel">···</span>
+  </div>
+  <div class="sync" id="syncBadge"><span class="dot"></span><span id="syncText">로컬 모드</span></div>
+  <span class="editBadge">✎ 편집 모드</span>
+  <div class="userBox" id="userBox" style="display:none"></div>
+  <div class="clock">
+    <div class="time" id="clockTime">--:--:--</div>
+    <div class="date" id="clockDate"></div>
+  </div>
+  <button class="hbtn primary" id="addBtn">+ 추가</button>
+  <button class="hbtn" id="stageBtn" title="현재 탭의 진행 단계 이름 변경">⚙ 단계명</button>
+  <button class="hbtn" id="codeBtn" title="HTML/CSS/JS 코드 직접 편집">&lt;/&gt; 코드 편집</button>
+  <select class="hbtn" id="langSel" title="언어 / Language / 言語">
+    <option value="ko">🌐 한국어</option>
+    <option value="en">🌐 English</option>
+    <option value="ja">🌐 日本語</option>
+  </select>
+  <button class="hbtn" id="langToggleBtn" title="일반 모드에서 언어 선택 버튼 표시/숨김">🌐 언어 버튼: 표시</button>
+  <button class="hbtn" id="themeBtn" title="라이트/다크 모드 전환">☀ 라이트 모드</button>
+  <button class="hbtn" id="fsBtn">⛶ 전체화면</button>
+</header>
+
+<div class="tabs">
+  <div id="tabsBtns" style="display:flex;gap:6px"></div>
+  <div class="tools">
+    <input id="searchBox" placeholder="🔍 제품 검색 (생산이력 포함)" autocomplete="off">
+    <div class="daterange" title="조회 기간 (접수일·납기일·진행일 기준)">
+      <span class="drlabel">📅 기간</span>
+      <input type="date" id="dateFrom">
+      <span class="drtilde">~</span>
+      <input type="date" id="dateTo">
+      <button class="drclear" id="dateClear" title="기간 초기화">✕</button>
+    </div>
+    <span class="pageinfo" id="pageInfo"></span>
+  </div>
+</div>
+
+<main id="main">
+  <div class="summary" id="summary"></div>
+  <div class="board" id="board"></div>
+</main>
+
+<!-- 추가/수정 모달 -->
+<div class="overlay" id="overlay">
+  <div class="modal modal-scroll">
+    <h2 id="modalTitle">추가</h2>
+    <div id="modalFields" class="modal-fields"></div>
+    <div class="btns">
+      <button class="hbtn" id="cancelBtn">취소</button>
+      <button class="hbtn primary" id="saveBtn">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 로그인 화면 -->
+<div class="loginOverlay" id="loginOverlay">
+  <div class="loginBox">
+    <div class="loginLamp"></div>
+    <h1>생산 현황 모니터링</h1>
+    <small>PRODUCTION STATUS BOARD</small>
+    <p class="loginDesc">회사 Google 계정으로 로그인하세요.<br>Sign in with your Google account. / Googleアカウントでログイン</p>
+    <button class="googleBtn" onclick="doGoogleLogin()">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.8-6.1C1 16.4 0 20.1 0 24s1 7.6 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.8 2.3-8.4 2.3-6.3 0-11.7-3.7-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+      Google 계정으로 로그인
+    </button>
+    <div class="loginError" id="loginError"></div>
+    <div class="loginNote">로그인 후 진행 현황 조회와 검색이 가능합니다.<br>편집은 등록된 담당자 계정만 가능합니다.</div>
+  </div>
+</div>
+
+<!-- 삭제 확인 팝업 -->
+<div class="overlay" id="confirmOverlay">
+  <div class="modal" style="max-width:380px">
+    <h2 id="confirmTitle">삭제 확인</h2>
+    <div id="confirmMsg" style="font-size:14px;color:var(--txt);line-height:1.6;margin-bottom:4px"></div>
+    <div class="btns">
+      <button class="hbtn" id="confirmCancel">취소</button>
+      <button class="hbtn" id="confirmOk" style="background:var(--red);border-color:var(--red);color:#fff">삭제</button>
+    </div>
+  </div>
+</div>
+
+<!-- 단계명 설정 모달 -->
+<div class="overlay" id="stageOverlay">
+  <div class="modal">
+    <h2 id="stageModalTitle">진행 단계 이름 변경</h2>
+    <div id="stageFields"></div>
+    <div class="btns">
+      <button class="hbtn" id="stageResetBtn">기본값 복원</button>
+      <button class="hbtn" id="stageCancelBtn">취소</button>
+      <button class="hbtn primary" id="stageSaveBtn">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 카드 확대 팝업 (PO / A/S) -->
+<div class="overlay" id="detailOverlay">
+  <div class="modal detailModal">
+    <div id="detailBody"></div>
+    <div class="btns">
+      <button class="hbtn" id="detailEditBtn">✎ 수정</button>
+      <button class="hbtn" id="detailDelBtn" style="color:var(--red);border-color:var(--red)">✕ 삭제</button>
+      <button class="hbtn primary" id="detailCloseBtn">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 코드 편집 오버레이 -->
+<div class="codeOverlay" id="codeOverlay">
+  <div class="codeBar">
+    <h2>&lt;/&gt; 코드 편집</h2>
+    <span class="status" id="codeStatus"></span>
+    <button class="hbtn" id="codeReloadBtn" title="현재 저장된 원본 코드 다시 불러오기">↻ 원본 불러오기</button>
+    <button class="hbtn" id="codePreviewBtn" title="수정한 코드를 새 탭에서 미리 실행">▶ 미리보기</button>
+    <button class="hbtn" id="codeApplyBtn" title="이 화면에만 즉시 적용">⚡ 이 화면 적용</button>
+    <button class="hbtn primary" id="codeApplyAllBtn" title="Firebase로 저장해 모든 화면에 실시간 적용">🌐 전체 실시간 적용</button>
+    <button class="hbtn" id="codeDownloadBtn" title="수정한 코드를 HTML 파일로 저장">⤓ 다운로드</button>
+    <button class="hbtn" id="codeRestoreBtn" title="전체 실시간 적용을 해제하고 원본 파일로 복구">♻ 전체 복구</button>
+    <button class="hbtn" id="codeCloseBtn">✕ 닫기</button>
+  </div>
+  <div class="codeArea"><textarea id="codeText" spellcheck="false" wrap="off"></textarea></div>
+  <div class="codeHint"><b>⚡ 이 화면 적용</b>: 지금 화면에만 즉시 반영 · <b>🌐 전체 실시간 적용</b>: 모든 접속 화면에 즉시 반영(새로고침 불필요) · <b>⤓ 다운로드</b>: 파일로 저장. &nbsp;⚠ 잘못된 코드로 화면이 멈추면 주소 끝에 <b>#safe</b>를 붙여 열면 원본으로 복구됩니다. (Tab 키 들여쓰기 지원)</div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   Firebase 설정 (실시간 공유용)
+   Firebase 콘솔 → 프로젝트 설정 → 웹 앱 구성값을 붙여넣으세요.
+   비워두면 데모 모드(브라우저 내 메모리)로 동작합니다.
+═══════════════════════════════════════════════════════════ */
+const firebaseConfig = {
+  apiKey: "AIzaSyCy0cDUQcEstOUFxzsYF-G7rGRHSMJqots",
+  authDomain: "production-dashboard-d17e2.firebaseapp.com",
+  projectId: "production-dashboard-d17e2",
+  storageBucket: "production-dashboard-d17e2.firebasestorage.app",
+  messagingSenderId: "665086659853",
+  appId: "1:665086659853:web:9d491042551f6821af3444"
+};
+
+/* ═══════════════════════════════════════════════════════════
+   편집 권한 계정 (Google 로그인 이메일)
+   여기에 등록된 계정만 편집 모드 진입 및 데이터 수정이 가능합니다.
+   그 외 로그인 사용자는 조회·검색만 가능합니다.
+   ※ 실제 차단은 Firestore 보안 규칙에서 이루어지므로,
+      아래 목록과 보안 규칙의 목록을 반드시 동일하게 유지하세요.
+═══════════════════════════════════════════════════════════ */
+const EDITORS = [
+  "sh.project.ai@gmail.com",            // ← 편집 담당자 이메일로 교체 (10명 이내 권장)
+];
+
+let currentUser = null;   // 로그인 사용자
+let isEditor = false;     // 편집 권한 여부
+
+/* ── 탭별 정의 ──
+   fields: 입력 폼 항목 (key, 라벨, 타입, half=2단 배치)
+   stages: 진행 단계 (dateKey가 있으면 해당 날짜를 단계 아래 표시)
+   hasQty: 수량 진행 바 표시 여부                                  */
+/* ══════════ 다국어 (한국어 / English / 日本語) ══════════
+   ※ 시계·달력(날짜 입력)은 아래 UI 언어와 무관하게
+     사용자 시스템(윈도우) 언어 설정을 그대로 따릅니다. */
+const SYS_LOCALE = (navigator.languages && navigator.languages[0]) || navigator.language || undefined;
+let lang = 'ko';
+const I18N = {
+  // 탭 / 화면
+  '메인 대시보드':{en:'Dashboard', ja:'メインダッシュボード'},
+  '생산 현황':{en:'Production', ja:'生産状況'},
+  'PO 진행 현황':{en:'PO Status', ja:'PO進行状況'},
+  'A/S 진행 현황':{en:'A/S Status', ja:'A/S進行状況'},
+  '생산 현황 모니터링':{en:'Production Status Monitoring', ja:'生産状況モニタリング'},
+  // 상태
+  '진행중':{en:'In Progress', ja:'進行中'},
+  '대기':{en:'Pending', ja:'待機'},
+  '완료':{en:'Completed', ja:'完了'},
+  '출고 지연':{en:'Shipment Delayed', ja:'出荷遅延'},
+  '지연':{en:'Delayed', ja:'遅延'},
+  '전체':{en:'All', ja:'全体'},
+  '생산 이력':{en:'Archived', ja:'生産履歴'},
+  '건':{en:' items', ja:'件'},
+  '전체 제품':{en:'Total Products', ja:'全製品'},
+  '전체 PO':{en:'Total POs', ja:'全PO'},
+  '전체 A/S':{en:'Total A/S', ja:'全A/S'},
+  // 버튼 / 도구
+  '+ 제품 추가':{en:'+ Add Product', ja:'+ 製品追加'},
+  '+ PO 추가':{en:'+ Add PO', ja:'+ PO追加'},
+  '+ A/S 추가':{en:'+ Add A/S', ja:'+ A/S追加'},
+  '⚙ 단계명':{en:'⚙ Stages', ja:'⚙ 工程名'},
+  '⛶ 전체화면':{en:'⛶ Fullscreen', ja:'⛶ 全画面'},
+  '⛶ 전체화면 해제':{en:'⛶ Exit Fullscreen', ja:'⛶ 全画面解除'},
+  '☀ 라이트 모드':{en:'☀ Light Mode', ja:'☀ ライトモード'},
+  '🌙 다크 모드':{en:'🌙 Dark Mode', ja:'🌙 ダークモード'},
+  '✎ 편집 모드':{en:'✎ Edit Mode', ja:'✎ 編集モード'},
+  '✎ 수정':{en:'✎ Edit', ja:'✎ 修正'},
+  '✕ 삭제':{en:'✕ Delete', ja:'✕ 削除'},
+  '닫기':{en:'Close', ja:'閉じる'},
+  '취소':{en:'Cancel', ja:'キャンセル'},
+  '저장':{en:'Save', ja:'保存'},
+  '삭제':{en:'Delete', ja:'削除'},
+  '삭제 확인':{en:'Confirm Delete', ja:'削除確認'},
+  '기본값 복원':{en:'Reset to Default', ja:'初期値に戻す'},
+  '+ 항목 추가':{en:'+ Add Item', ja:'+ 項目追加'},
+  '📅 기간':{en:'📅 Period', ja:'📅 期間'},
+  '🔍 제품 검색 (생산이력 포함)':{en:'🔍 Search (incl. history)', ja:'🔍 製品検索（履歴含む）'},
+  // 항목 라벨
+  '제품명':{en:'Product', ja:'製品名'},
+  '제품명 / 모델명':{en:'Product / Model', ja:'製品名 / モデル名'},
+  '제품 담당자':{en:'Product Owner', ja:'製品担当者'},
+  'Sales 담당':{en:'Sales Rep', ja:'Sales担当'},
+  '담당 지사':{en:'Branch', ja:'担当支社'},
+  '수량':{en:'Qty', ja:'数量'},
+  '목표 수량':{en:'Target Qty', ja:'目標数量'},
+  '완료 수량':{en:'Completed Qty', ja:'完了数量'},
+  '담당자':{en:'Owner', ja:'担当者'},
+  '수주 번호 (LOT)':{en:'Order No. (LOT)', ja:'受注番号 (LOT)'},
+  '생산 완료일':{en:'Production Due Date', ja:'生産完了日'},
+  'PO No.':{en:'PO No.', ja:'PO No.'},
+  'PO 접수일':{en:'PO Received', ja:'PO受付日'},
+  '출하 납기일':{en:'Delivery Due', ja:'出荷納期'},
+  'A/S 접수 No.':{en:'A/S No.', ja:'A/S受付No.'},
+  'A/S 접수일':{en:'A/S Received', ja:'A/S受付日'},
+  '접수 증상':{en:'Reported Issue', ja:'受付症状'},
+  '비고':{en:'Notes', ja:'備考'},
+  // 섹션
+  '기본 정보':{en:'Details', ja:'基本情報'},
+  '진행 단계':{en:'Progress Stages', ja:'進行工程'},
+  '수량 진행':{en:'Quantity Progress', ja:'数量進捗'},
+  '단계별 진행 날짜':{en:'Stage Dates', ja:'工程別日付'},
+  '진행 현황 목록':{en:'Status List', ja:'進行状況リスト'},
+  '완료율':{en:'Completion Rate', ja:'完了率'},
+  '추가':{en:'Add', ja:'追加'},
+  '수정':{en:'Edit', ja:'修正'},
+  // 기본 진행 단계명
+  '부품/기구 입고':{en:'Parts In', ja:'部品入庫'},
+  '기구 입고':{en:'Parts In', ja:'機構入庫'},
+  'PBA 입고':{en:'PBA In', ja:'PBA入庫'},
+  '조립':{en:'Assembly', ja:'組立'},
+  '공정검사':{en:'Inspection', ja:'工程検査'},
+  '생산 완료':{en:'Production Complete', ja:'生産完了'},
+  'PO 접수':{en:'PO Received', ja:'PO受付'},
+  '재고 확인':{en:'Stock Check', ja:'在庫確認'},
+  '출하 검사':{en:'Shipping Inspection', ja:'出荷検査'},
+  '포장':{en:'Packing', ja:'梱包'},
+  '출하':{en:'Shipped', ja:'出荷'},
+  'A/S 접수':{en:'A/S Received', ja:'A/S受付'},
+  '증상 확인':{en:'Diagnosis', ja:'症状確認'},
+  '수리':{en:'Repair', ja:'修理'},
+  '수리 검사':{en:'Repair Check', ja:'修理検査'},
+  // 메시지
+  '표시할 항목이 없습니다':{en:'No items to display', ja:'表示する項目がありません'},
+  '검색 결과가 없습니다.':{en:'No search results.', ja:'検索結果がありません。'},
+  '해당 기간에 항목이 없습니다.':{en:'No items in this period.', ja:'該当期間に項目がありません。'},
+  '이 항목을 목록에서 삭제할까요?':{en:'Delete this item from the list?', ja:'この項目を削除しますか？'},
+  '삭제하면 되돌릴 수 없습니다.':{en:'This cannot be undone.', ja:'削除すると元に戻せません。'},
+  '전체 보기 →':{en:'View all →', ja:'全体を見る →'},
+  // 파일 불러오기 / PO 등록
+  '📄 PO 파일 불러오기 (PDF / HTML)':{en:'📄 Import PO File (PDF / HTML)', ja:'📄 POファイル読込 (PDF / HTML)'},
+  '파일을 선택하면 PO No.·접수일·지사·납기일·제품명·수량이 자동 입력됩니다':{en:'Select a file to auto-fill PO No., dates, branch, product and quantity', ja:'ファイルを選択するとPO No.・受付日・支社・納期・製品名・数量が自動入力されます'},
+  '파일 분석 중...':{en:'Analyzing file...', ja:'ファイル解析中...'},
+  '(내용을 확인하고 필요 시 직접 수정하세요)':{en:'(Please review and edit if needed)', ja:'(内容を確認し必要に応じて修正してください)'},
+  '자동 입력됨':{en:'Auto-filled', ja:'自動入力'},
+  '인식된 항목이 없습니다. 파일 형식을 확인하거나 직접 입력하세요.':{en:'Nothing recognized. Check the file format or enter manually.', ja:'認識項目がありません。ファイル形式を確認するか直接入力してください。'},
+  '분석 실패':{en:'Analysis failed', ja:'解析失敗'},
+  '표 ':{en:'', ja:'表 '},
+  '행':{en:' rows', ja:'行'},
+  // 폼 설명
+  '(단계 클릭 시 자동 기록, 직접 수정 가능)':{en:'(auto-recorded on stage click, editable)', ja:'(工程クリックで自動記録・修正可)'},
+  '(Description · 수량 — PO 파일 불러오기 시 자동 입력)':{en:'(Description · Qty — auto-filled from PO file)', ja:'(Description・数量 — POファイルから自動入力)'},
+  '비고 내용 (특이사항, 요청사항 등)':{en:'Notes (special remarks, requests, etc.)', ja:'備考内容（特記事項・要望など）'},
+  'Description':{en:'Description', ja:'Description'},
+  // 안내 메시지
+  '검색 결과':{en:'Search results', ja:'検索結果'},
+  '완료 후 2주가 지난 생산 이력도 포함됩니다.':{en:'Includes history completed over 2 weeks ago.', ja:'完了後2週間経過した履歴も含みます。'},
+  '항목만 표시 중입니다. 위 카드를 다시 클릭하면 전체 보기로 돌아갑니다.':{en:'items only. Click the card again to show all.', ja:'項目のみ表示中。カードを再クリックで全体表示に戻ります。'},
+  '기간 항목만 표시 중입니다 (접수일·납기일·진행일 기준).':{en:'— showing items in this period (by received / due / progress dates).', ja:'期間の項目のみ表示中（受付日・納期・進行日基準）。'},
+  '기간을 조정하거나 📅 옆 ✕ 로 초기화하세요.':{en:'Adjust the period or click ✕ to reset.', ja:'期間を調整するか ✕ でリセットしてください。'},
+  '제품명, 번호, 담당자, 지사, 비고 내용으로 검색할 수 있습니다.':{en:'Search by product, number, owner, branch, or notes.', ja:'製品名・番号・担当者・支社・備考で検索できます。'},
+  '항목이 없습니다.':{en:'No items.', ja:'項目がありません。'},
+  '등록된 항목이 없습니다.':{en:'No items registered.', ja:'登録された項目がありません。'},
+  '버튼으로 등록하세요.':{en:'— use this button to add one.', ja:'ボタンから登録してください。'},
+  '전체 출고 지연':{en:'Total shipment delays', ja:'全体出荷遅延'},
+  '확인이 필요합니다':{en:'— needs attention', ja:'— 確認が必要です'},
+  '현재 출고 지연 항목이 없습니다':{en:'No shipment delays', ja:'現在出荷遅延はありません'},
+  '조회기간':{en:'Period', ja:'照会期間'},
+  '처음':{en:'Start', ja:'最初'},
+  '지금':{en:'Now', ja:'現在'},
+  '총':{en:'Total', ja:'合計'},
+  '화면당':{en:'showing', ja:'画面あたり'},
+  '(스크롤)':{en:'(scroll)', ja:'(スクロール)'},
+  '표시 중':{en:'shown', ja:'表示中'},
+  // 툴팁
+  '확대 보기':{en:'Expand', ja:'拡大表示'},
+  '로 이동':{en:' →', ja:'へ移動'},
+  '클릭하여 변경':{en:'click to change', ja:'クリックで変更'},
+  '미완료':{en:'Not done', ja:'未完了'},
+  '조회 기간 (접수일·납기일·진행일 기준)':{en:'Period (by received / due / progress dates)', ja:'照会期間（受付日・納期・進行日基準）'},
+  '기간 초기화':{en:'Reset period', ja:'期間リセット'},
+  '현재 탭의 진행 단계 이름 변경':{en:'Edit stage names for this tab', ja:'現在タブの工程名を変更'},
+  '진행 단계 설정':{en:'Stage Settings', ja:'工程設定'},
+  '단계':{en:'Stage', ja:'工程'},
+  '(최종 단계)':{en:'(final)', ja:'(最終工程)'},
+  '단계 이름':{en:'Stage name', ja:'工程名'},
+  '이 단계 삭제':{en:'Delete this stage', ja:'この工程を削除'},
+};
+function tr(s){
+  if(lang === 'ko' || s == null) return s;
+  const e = I18N[s];
+  return (e && typeof e[lang] === 'string') ? e[lang] : s;   // 빈 문자열 번역도 허용
+}
+
+const TABS = {
+  prod: {
+    label:'생산 현황', coll:'production', color:'var(--amber)', hasQty:true,
+    title:'생산 현황 모니터링', sub:'PRODUCTION STATUS BOARD',
+    addLabel:'+ 제품 추가', unit:'제품',
+    codeKey:'lot', codePrefix:'LOT ',
+    fields:[
+      {key:'name',   label:'제품명 / 모델명', ph:'예: ABC-100 컨트롤러'},
+      {key:'lot',    label:'수주 번호 (LOT)', ph:'예: 2607-015', half:1},
+      {key:'owner',  label:'담당자', ph:'예: 김생산', half:1},
+      {key:'target', label:'목표 수량', type:'number', ph:'100', half:1},
+      {key:'done',   label:'완료 수량', type:'number', ph:'0', half:1},
+      {key:'due',    label:'생산 완료일', type:'date'},
+    ],
+    meta:[{key:'owner', label:'제품 담당자'},{key:'due', label:'생산 완료일'}],
+    stages:[
+      {name:'기구 입고', color:'var(--amber)',  n:'1'},
+      {name:'PBA 입고', color:'var(--amber)',  n:'2'},
+      {name:'조립',     color:'var(--blue)',   n:'3'},
+      {name:'공정검사',  color:'var(--violet)', n:'4'},
+      {name:'생산 완료', color:'var(--green)',  n:'✓'},
+    ],
+  },
+  po: {
+    label:'PO 진행 현황', coll:'po_orders', color:'var(--blue)', hasQty:false,
+    title:'PO 진행 현황', sub:'PURCHASE ORDER STATUS BOARD',
+    addLabel:'+ PO 추가', unit:'PO',
+    codeKey:'po', codePrefix:'PO ',
+    fields:[
+      {key:'po',     label:'PO No.', ph:'예: PO-2607-021'},
+      {key:'name',   label:'제품명', ph:'예: ABC-100 컨트롤러'},
+      {key:'owner',  label:'제품 담당자', ph:'예: 김생산', half:1},
+      {key:'branch', label:'담당 지사', ph:'예: 부산지사', half:1},
+      {key:'sales',  label:'Sales 담당', ph:'예: 최영업', half:1},
+      {key:'qty',    label:'수량', type:'number', ph:'10', half:1},
+      {key:'recv',   label:'PO 접수일', type:'date', half:1},
+      {key:'due',    label:'출하 납기일', type:'date', half:1},
+    ],
+    meta:[{key:'owner', label:'제품 담당자'},{key:'sales', label:'Sales 담당'},{key:'branch', label:'담당 지사'},{key:'qty', label:'수량', post:'개'}],
+    stages:[
+      {name:'PO 접수',  color:'var(--blue)',   n:'1', dateKey:'recv'},
+      {name:'재고 확인', color:'var(--blue)',   n:'2'},
+      {name:'출하 검사', color:'var(--violet)', n:'3'},
+      {name:'포장',     color:'var(--violet)', n:'4'},
+      {name:'출하',     color:'var(--green)',  n:'✓', dateKey:'due'},
+    ],
+  },
+  as: {
+    label:'A/S 진행 현황', coll:'as_orders', color:'var(--teal)', hasQty:false,
+    title:'A/S 진행 현황', sub:'AFTER-SERVICE STATUS BOARD',
+    addLabel:'+ A/S 추가', unit:'A/S',
+    codeKey:'asNo', codePrefix:'A/S ',
+    fields:[
+      {key:'asNo',   label:'A/S 접수 No.', ph:'예: AS-2607-008'},
+      {key:'name',   label:'제품명', ph:'예: ABC-100 컨트롤러'},
+      {key:'owner',  label:'제품 담당자', ph:'예: 김생산', half:1},
+      {key:'branch', label:'담당 지사', ph:'예: 대전지사', half:1},
+      {key:'sales',  label:'Sales 담당', ph:'예: 최영업', half:1},
+      {key:'issue',  label:'접수 증상', ph:'예: 전원 불량', half:1},
+      {key:'recv',   label:'A/S 접수일', type:'date', half:1},
+      {key:'due',    label:'출하 납기일', type:'date', half:1},
+    ],
+    meta:[{key:'owner', label:'제품 담당자'},{key:'sales', label:'Sales 담당'},{key:'branch', label:'담당 지사'},{key:'issue', label:'접수 증상'}],
+    stages:[
+      {name:'A/S 접수', color:'var(--teal)',   n:'1', dateKey:'recv'},
+      {name:'증상 확인', color:'var(--teal)',   n:'2'},
+      {name:'수리',     color:'var(--blue)',   n:'3'},
+      {name:'수리 검사', color:'var(--violet)', n:'4'},
+      {name:'출하',     color:'var(--green)',  n:'✓', dateKey:'due'},
+    ],
+  },
+};
+
+/* ── 데모 데이터 (Firebase 미설정 시) ── */
+const demoData = {
+  prod:[
+    {id:'p1', name:'ABC-100 컨트롤러', lot:'2606-042', owner:'김생산', target:200, done:120, due:'2026-07-10', stage:2, sdates:{0:'2026-06-18',1:'2026-06-22',2:'2026-06-30'}},
+    {id:'p2', name:'XR-50 센서모듈',   lot:'2606-051', owner:'이조립', target:150, done:150, due:'2026-07-04', stage:3, sdates:{0:'2026-06-12',1:'2026-06-16',2:'2026-06-24',3:'2026-07-02'}},
+    {id:'p3', name:'PWR-24 전원보드',  lot:'2607-003', owner:'박검사', target:80,  done:0,   due:'2026-07-20', stage:0, sdates:{0:'2026-07-14'}},
+    {id:'p4', name:'DSP-7 디스플레이', lot:'2605-098', owner:'김생산', target:300, done:300, due:'2026-06-28', stage:4, sdates:{4:'2026-06-30'}},
+    {id:'p5', name:'CNV-9 컨버터',    lot:'2605-011', owner:'이조립', target:50,  done:50,  due:'2026-06-05', stage:4, sdates:{4:'2026-06-05'}, note1:'초도 양산분'},
+  ],
+  po:[
+    {id:'o1', po:'PO-2607-021', name:'ABC-100 컨트롤러', owner:'김생산', branch:'부산지사', sales:'최영업', qty:20, recv:'2026-06-25', due:'2026-07-08', stage:2, sdates:{0:'2026-06-25',1:'2026-06-29',2:'2026-07-06'}, hwItems:[{d:'ABC-100 Controller H/W',q:20},{d:'Power Cable Set',q:20},{d:'Mounting Bracket',q:40}]},
+    {id:'o2', po:'PO-2607-019', name:'XR-50 센서모듈',   owner:'이조립', branch:'서울본사', sales:'정영업', qty:5,  recv:'2026-06-22', due:'2026-07-01', stage:1, sdates:{0:'2026-06-22',1:'2026-06-27'}},
+    {id:'o3', po:'PO-2606-088', name:'DSP-7 디스플레이', owner:'김생산', branch:'광주지사', sales:'최영업', qty:12, recv:'2026-06-10', due:'2026-06-26', stage:4, sdates:{0:'2026-06-10',1:'2026-06-14',2:'2026-06-19',3:'2026-06-23',4:'2026-07-14'}},
+  ],
+  as:[
+    {id:'a1', asNo:'AS-2607-008', name:'PWR-24 전원보드', owner:'박검사', branch:'대전지사', sales:'정영업', issue:'전원 불량', recv:'2026-06-28', due:'2026-07-09', stage:1, sdates:{0:'2026-06-28',1:'2026-07-02'}},
+    {id:'a2', asNo:'AS-2606-031', name:'ABC-100 컨트롤러', owner:'김생산', branch:'부산지사', sales:'최영업', issue:'통신 오류', recv:'2026-06-15', due:'2026-06-30', stage:4, sdates:{0:'2026-06-15',1:'2026-06-17',2:'2026-06-22',3:'2026-06-25',4:'2026-07-16'}},
+  ],
+};
+
+let curTab = 'home';
+let state = {prod:[], po:[], as:[]};
+let stageNames = {prod:null, po:null, as:null};   // 사용자 지정 단계명 (null이면 기본값)
+let db = null, unsubs = {}, editId = null;
+let fbConfigured = false, fbConnected = null;   // Firebase 설정/연결 상태
+
+/* ── 연결(Online/Offline) 상태 LED 갱신 ── */
+function updateConn(){
+  const net = navigator.onLine;
+  const online = fbConfigured ? (net && fbConnected !== false) : net;
+  const lamp = document.getElementById('connLamp');
+  const label = document.getElementById('connLabel');
+  if(!lamp || !label) return;
+  lamp.classList.toggle('online', online);
+  lamp.classList.toggle('offline', !online);
+  label.classList.toggle('online', online);
+  label.classList.toggle('offline', !online);
+  label.textContent = online ? 'Online' : 'Offline';
+  label.title = fbConfigured
+    ? (online ? 'Firebase 실시간 연결됨' : '연결 끊김 — 네트워크/Firebase 확인')
+    : (online ? '네트워크 온라인 (Firebase 미설정 — 데모)' : '오프라인');
+}
+window.addEventListener('online', updateConn);
+window.addEventListener('offline', updateConn);
+let searchQ = '';                      // 검색어
+let dateFrom = '', dateTo = '';        // 조회 기간 (기준 날짜 필터)
+let statFilter = null;                 // 요약 카드 클릭 필터 (null|all|run|wait|late|done|hist)
+const PAGE_SIZE = 5;                   // 한 화면에 보이는 카드 수 (카드 높이 기준)
+const HISTORY_DAYS = 14;               // 완료 후 표시 유지 기간
+
+/* 완료일 = 마지막 단계에 기록된 날짜 */
+function completionDate(p, tab){
+  const last = getStages(tab).length - 1;
+  return (p.sdates && p.sdates[last]) || null;
+}
+/* 완료 후 2주가 지난 항목인지 (이력으로 전환) */
+function isHistory(p, tab){
+  if(statusOf(p, tab) !== 'done') return false;
+  const d = completionDate(p, tab);
+  if(!d) return false;   // 완료일 미기록이면 계속 표시
+  return (Date.now() - new Date(d).getTime()) / 86400000 > HISTORY_DAYS;
+}
+/* 검색 매칭 */
+function matches(p, q){
+  q = q.toLowerCase();
+  return ['name','lot','po','asNo','owner','branch','sales','issue','note','note1','note2']
+    .some(k => p[k] && String(p[k]).toLowerCase().includes(q));
+}
+/* 조회 기간 필터: 항목의 날짜(접수일·납기일·단계별 진행일) 중 하나라도 기간에 들면 표시 */
+function itemDates(p){
+  const ds = [];
+  if(p.recv) ds.push(p.recv);
+  if(p.due) ds.push(p.due);
+  if(p.sdates) Object.values(p.sdates).forEach(d=>d && ds.push(d));
+  return ds;
+}
+function inDateRange(p){
+  if(!dateFrom && !dateTo) return true;
+  const ds = itemDates(p);
+  if(!ds.length) return false;   // 기간 지정 시 날짜 없는 항목은 제외
+  return ds.some(d => (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo));
+}
+
+/* 현재 적용되는 단계 목록 (사용자 지정 이름/개수 반영)
+   단계마다 서로 다른 색상을 부여합니다. */
+const STAGE_COLORS = [
+  'var(--amber)',   // 1단계
+  'var(--blue)',    // 2단계
+  'var(--violet)',  // 3단계
+  'var(--teal)',    // 4단계
+  'var(--green)',   // 5단계
+  '#EC6F9B',        // 6단계 (핑크)
+  '#E8C547',        // 7단계 (옐로)
+  '#F0714B',        // 8단계 (오렌지)
+];
+function stageColor(i){ return STAGE_COLORS[i % STAGE_COLORS.length]; }
+function getStages(tab){
+  const base = TABS[tab].stages;
+  const names = stageNames[tab] || base.map(s=>s.name);
+  return names.map((nm,i)=>{
+    const last = i === names.length-1;
+    const match = base.find(b=>b.name===nm);
+    return {
+      name: nm,
+      color: stageColor(i),                       // 단계별 고유 색상
+      n: last ? '✓' : String(i+1),
+      dateKey: match ? match.dateKey : (i===0 ? base[0].dateKey : (last ? base[base.length-1].dateKey : undefined)),
+    };
+  });
+}
+
+/* ── Firebase 초기화 + Google 로그인 (실패 시 데모 모드) ── */
+async function init(){
+  renderTabs();
+  const hasConfig = firebaseConfig.projectId;
+  if(hasConfig){
+    try{
+      await loadScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js');
+      await loadScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js');
+      await loadScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js');
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+      fbConfigured = true;
+      // 오프라인 캐시: 재접속 시 읽기 횟수를 줄여 무료 한도를 아낍니다
+      try{ await db.enablePersistence({synchronizeTabs:true}); }catch(e){}
+      // 로그인 상태에 따라 화면 전환
+      firebase.auth().onAuthStateChanged(user=>{
+        if(user){
+          currentUser = user;
+          isEditor = EDITORS.map(x=>x.toLowerCase()).includes((user.email||'').toLowerCase());
+          showLogin(false);
+          renderUserBox();
+          if(!subscribed) startSubscriptions();
+        }else{
+          currentUser = null; isEditor = false;
+          document.body.classList.remove('edit');
+          stopSubscriptions();
+          renderUserBox();
+          showLogin(true);
+        }
+      });
+      setSync(true);
+      return;
+    }catch(e){ console.warn('Firebase 연결 실패 → 데모 모드', e); }
+  }
+  // 데모 모드 (Firebase 미설정): 로그인 없이 열람
+  isEditor = true;
+  state = JSON.parse(JSON.stringify(demoData));
+  setSync(false);
+  renderUserBox();
+  render();
+}
+
+/* ── Firestore 실시간 구독 (로그인 후에만 실행) ── */
+let subscribed = false;
+const MAX_DOCS = 300;   // 한 컬렉션당 최대 구독 문서 수 (읽기 횟수 절약)
+function startSubscriptions(){
+  subscribed = true;
+  let firstColl = true;
+  for(const t of Object.keys(TABS)){
+    const opts = firstColl ? {includeMetadataChanges:true} : {};
+    unsubs[t] = db.collection(TABS[t].coll).orderBy('createdAt','desc').limit(MAX_DOCS)
+      .onSnapshot(opts, snap=>{
+        state[t] = snap.docs.map(d=>({id:d.id, ...d.data()}));
+        if(firstColl){ fbConnected = !snap.metadata.fromCache; updateConn(); }
+        render();
+      }, err=>{ fbConnected=false; updateConn(); console.warn('Firestore 오류',err); });
+    firstColl = false;
+    // 단계명 설정 동기화
+    unsubs['stg_'+t] = db.collection('settings').doc('stages_'+t).onSnapshot(doc=>{
+      stageNames[t] = doc.exists ? (doc.data().names || null) : null;
+      render();
+    });
+  }
+  // 테마·언어 설정 동기화
+  unsubs['ui'] = db.collection('settings').doc('ui').onSnapshot(doc=>{
+    if(!doc.exists) return;
+    const d = doc.data();
+    if(d.theme) applyTheme(d.theme);
+    if(typeof d.langEnabled === 'boolean') applyLangEnabled(d.langEnabled);
+  });
+  // 전체 실시간 코드 적용 (#safe 로 접속 시 무시 — 복구 경로)
+  if(!location.hash.includes('safe')){
+    unsubs['code'] = db.collection('settings').doc('appCode').onSnapshot(doc=>{
+      if(!doc.exists) return;
+      const {html, ts} = doc.data();
+      let applied=null; try{ applied=localStorage.getItem('pd_applied_ts'); }catch(e){}
+      if(html && String(ts) !== String(applied)){
+        try{ localStorage.setItem('pd_applied_ts', String(ts)); }catch(e){}
+        document.open(); document.write(html); document.close();
+      }
+    });
+  }
+}
+function stopSubscriptions(){
+  Object.values(unsubs).forEach(u=>{ try{ u && u(); }catch(e){} });
+  unsubs = {}; subscribed = false;
+  state = {prod:[], po:[], as:[]};
+}
+
+/* ── 로그인 화면 / 사용자 표시 ── */
+function showLogin(on){
+  document.getElementById('loginOverlay').classList.toggle('show', on);
+  document.body.classList.toggle('locked', on);
+}
+function renderUserBox(){
+  const box = document.getElementById('userBox');
+  if(!box) return;
+  if(!currentUser){ box.innerHTML=''; box.style.display='none'; return; }
+  box.style.display='flex';
+  const roleTxt = isEditor
+    ? (lang==='en'?'Editor':lang==='ja'?'編集者':'편집 권한')
+    : (lang==='en'?'Viewer':lang==='ja'?'閲覧者':'조회 전용');
+  box.innerHTML = `
+    ${currentUser.photoURL?`<img src="${currentUser.photoURL}" alt="">`:''}
+    <span class="uname">${esc(currentUser.displayName||currentUser.email||'')}</span>
+    <span class="urole ${isEditor?'ed':''}">${roleTxt}</span>
+    <button class="hbtn" id="logoutBtn">${lang==='en'?'Sign out':lang==='ja'?'ログアウト':'로그아웃'}</button>`;
+  const lb = document.getElementById('logoutBtn');
+  if(lb) lb.onclick = ()=>{ if(firebase && firebase.auth) firebase.auth().signOut(); };
+}
+window.doGoogleLogin = async ()=>{
+  const err = document.getElementById('loginError');
+  err.textContent = '';
+  try{
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await firebase.auth().signInWithPopup(provider);
+  }catch(e){
+    if(e.code === 'auth/popup-blocked'){
+      try{ await firebase.auth().signInWithRedirect(new firebase.auth.GoogleAuthProvider()); return; }catch(e2){}
+    }
+    err.textContent = '로그인 실패: ' + (e.message || e.code || '');
+  }
+};
+function loadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej;
+    document.head.appendChild(s);
+  });
+}
+function setSync(on){
+  const b=document.getElementById('syncBadge');
+  b.classList.toggle('on',on);
+  document.getElementById('syncText').textContent = on ? '실시간 동기화 중' : '데모 모드 (Firebase 미연결)';
+}
+
+/* ── 데이터 조작 ── */
+async function saveItem(p){
+  const coll = TABS[curTab].coll;
+  if(db){
+    if(p.id){ const {id,...data}=p; await db.collection(coll).doc(id).update(data); }
+    else await db.collection(coll).add({...p, createdAt:Date.now()});
+  }else{
+    const list = state[curTab];
+    if(p.id){ const i=list.findIndex(x=>x.id===p.id); list[i]={...list[i],...p}; }
+    else list.unshift({...p, id:'d'+Date.now()});
+    render();
+  }
+}
+/* 커스텀 확인 팝업 */
+let _confirmCb = null;
+function showConfirm(msg, onOk){
+  _confirmCb = onOk;
+  document.getElementById('confirmMsg').innerHTML = msg;
+  document.getElementById('confirmOverlay').classList.add('show');
+}
+(function(){
+  const ov = document.getElementById('confirmOverlay');
+  const close = ()=>{ ov.classList.remove('show'); _confirmCb=null; };
+  document.getElementById('confirmCancel').onclick = close;
+  ov.onclick = e=>{ if(e.target===ov) close(); };
+  document.getElementById('confirmOk').onclick = ()=>{ const cb=_confirmCb; close(); if(cb) cb(); };
+})();
+
+window.deleteItem = function(id){
+  showConfirm(tr('이 항목을 목록에서 삭제할까요?')+'<br><span style="font-size:12px;color:var(--sub)">'+tr('삭제하면 되돌릴 수 없습니다.')+'</span>', async ()=>{
+    try{
+      if(db){ await db.collection(TABS[curTab].coll).doc(id).delete(); }
+      else { state[curTab] = state[curTab].filter(p=>p.id!==id); render(); }
+      const dov = document.getElementById('detailOverlay');
+      if(dov) dov.classList.remove('show');
+    }catch(e){
+      alert('삭제 실패: '+e.message+'\n(Firebase 권한/규칙을 확인하세요)');
+    }
+  });
+};
+function todayStr(){
+  const d=new Date(), z=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`;
+}
+async function setStage(p, idx){
+  const maxIdx = getStages(curTab).length - 1;
+  idx = Math.min(idx, maxIdx);
+  const cur = effStage(p, curTab);
+  const newStage = Math.max(-1, (cur === idx) ? idx - 1 : idx);
+  // 단계별 날짜 자동 기록: 완료된 단계는 오늘 날짜(비어있을 때만), 되돌린 단계는 삭제
+  const sdates = {...(p.sdates||{})};
+  for(let i=0; i<=newStage; i++) if(!sdates[i]) sdates[i]=todayStr();
+  for(let i=newStage+1; i<=maxIdx; i++) delete sdates[i];
+  await saveItem({...p, stage:newStage, sdates});
+}
+
+/* ── 진행 단계 산출 ──
+   상세 내용에 입력된 '단계별 날짜'만을 기준으로 판단합니다.
+   날짜가 하나도 없으면 진행 표시 없음(대기)입니다. */
+function effStage(p, tab){
+  const len = getStages(tab).length;
+  let last = -1;
+  if(p.sdates){
+    for(let i=0; i<len; i++) if(p.sdates[i]) last = i;
+  }
+  return last;
+}
+
+/* ── 상태 판정 ── */
+function statusOf(p, tab){
+  const len = getStages(tab).length;
+  const s = effStage(p, tab);
+  if(s >= len-1) return 'done';
+  if(p.due && new Date(p.due) < new Date(new Date().toDateString())) return 'late';
+  if(s < 0) return 'wait';
+  return 'run';
+}
+const statusLabel = {run:'진행중', done:'완료', late:'출고 지연', wait:'대기'};
+function statusText(st){ return tr(statusLabel[st]); }
+
+/* ── 렌더링 ── */
+function renderTabs(){
+  const homeBtn = `
+    <button class="tab ${curTab==='home'?'on':''}" style="--tc:var(--green)" onclick="tabClick(event,'home')">
+      📊 ${tr('메인 대시보드')}
+    </button>`;
+  document.getElementById('tabsBtns').innerHTML = homeBtn + Object.entries(TABS).map(([k,t])=>`
+    <button class="tab ${k===curTab?'on':''}" style="--tc:${t.color}" onclick="tabClick(event,'${k}')">
+      ${tr(t.label)}<span class="cnt" id="cnt-${k}">${state[k].filter(p=>!isHistory(p,k)).length}</span>
+    </button>`).join('');
+}
+window.switchTab = (k)=>{ curTab=k; statFilter=null; render(); document.getElementById('board').scrollTop = 0; };
+
+/* ── 편집 모드 전환: 탭 타이틀을 Ctrl(Mac은 Cmd) 누른 채 3번 연속 클릭 ── */
+let ctrlClicks = {count:0, tab:null, last:0};
+window.tabClick = (e, k)=>{
+  if(e.ctrlKey || e.metaKey){
+    const now = Date.now();
+    // 같은 탭을 1초 이내 간격으로 연속 클릭해야 카운트
+    if(ctrlClicks.tab === k && now - ctrlClicks.last < 1000) ctrlClicks.count++;
+    else ctrlClicks.count = 1;
+    ctrlClicks.tab = k; ctrlClicks.last = now;
+    if(ctrlClicks.count >= 3){
+      ctrlClicks.count = 0;
+      if(!isEditor){
+        alert(lang==='en' ? 'Your account does not have edit permission.\nPlease contact the administrator.'
+            : lang==='ja' ? 'このアカウントには編集権限がありません。\n管理者にお問い合わせください。'
+            : '이 계정에는 편집 권한이 없습니다.\n담당자에게 문의하세요.');
+        return;
+      }
+      document.body.classList.toggle('edit');
+      renderUserBox();
+      render();
+      return;   // 모드 전환 시에는 탭 이동 없이 현재 화면 유지
+    }
+    return;   // Ctrl 클릭 중에는 탭 전환하지 않음 (오전환 방지)
+  }
+  ctrlClicks.count = 0;
+  switchTab(k);
+};
+
+function render(){
+  requestAnimationFrame(fitScreen);
+  renderTabs();
+
+  // 메인 대시보드 (전체 탭 요약)
+  if(curTab === 'home'){
+    document.getElementById('pageTitle').textContent = tr('생산 현황 모니터링');
+    document.querySelector('.brand small').textContent = 'PRODUCTION STATUS BOARD';
+    document.getElementById('addBtn').textContent = '+ 추가';
+    renderHome();
+    return;
+  }
+
+  const T = TABS[curTab];
+  document.getElementById('summary').style.display = '';
+  document.getElementById('board').classList.remove('home');
+  document.getElementById('pageTitle').textContent = tr('생산 현황 모니터링');
+  document.querySelector('.brand small').textContent = 'PRODUCTION STATUS BOARD';
+  document.getElementById('addBtn').textContent = tr(T.addLabel);
+
+  const all = state[curTab];
+  const active = all.filter(p=>!isHistory(p, curTab));   // 완료 후 2주 지난 항목 제외
+  const searching = !!searchQ;
+  const board = document.getElementById('board');
+  const pageInfo = document.getElementById('pageInfo');
+  board.classList.toggle('scroll', searching);
+
+  // 요약은 현재 표시 대상(이력 제외) 기준 — 카드 클릭 시 해당 항목만 필터링
+  const cnt = {run:0, done:0, late:0, wait:0};
+  active.forEach(p=>cnt[statusOf(p,curTab)]++);
+  const histCnt = all.length - active.length;
+  const sel = f => statFilter===f ? 'sel' : '';
+  document.getElementById('summary').innerHTML = `
+    <div class="stat ${sel('all')}"  style="--c:var(--txt)"    onclick="statClick('all')"><div class="label">${tr('전체 '+T.unit)||('전체 '+T.unit)}</div><div class="value">${active.length}<span class="unit">${tr('건')}</span></div></div>
+    <div class="stat ${sel('run')}"  style="--c:var(--blue)"   onclick="statClick('run')"><div class="label">${tr('진행중')}</div><div class="value">${cnt.run}<span class="unit">${tr('건')}</span></div></div>
+    <div class="stat ${sel('wait')}" style="--c:var(--sub)"    onclick="statClick('wait')"><div class="label">${tr('대기')}</div><div class="value">${cnt.wait}<span class="unit">${tr('건')}</span></div></div>
+    <div class="stat ${sel('late')}" style="--c:var(--red)"    onclick="statClick('late')"><div class="label">${tr('출고 지연')}</div><div class="value">${cnt.late}<span class="unit">${tr('건')}</span></div></div>
+    <div class="stat ${sel('done')}" style="--c:var(--green)"  onclick="statClick('done')"><div class="label">${tr('완료')}</div><div class="value">${cnt.done}<span class="unit">${tr('건')}</span></div></div>
+    <div class="stat ${sel('hist')}" style="--c:var(--violet)" onclick="statClick('hist')"><div class="label">${tr('생산 이력')}</div><div class="value">${histCnt}<span class="unit">${tr('건')}</span></div></div>`;
+
+  const FILTER_LABEL = {all:tr('전체'), run:tr('진행중'), wait:tr('대기'), late:tr('출고 지연'), done:tr('완료'), hist:tr('생산 이력')};
+  let list, headNote = '';
+  if(searching){
+    list = all.filter(p=>matches(p, searchQ));   // 이력 포함 전체 검색
+    pageInfo.textContent = `${tr('검색 결과')} ${list.length}${tr('건')}`;
+    headNote = `<div class="searchNote">"${esc(searchQ)}" ${tr('검색 결과')} — ${tr('완료 후 2주가 지난 생산 이력도 포함됩니다.')}</div>`;
+  }else if(statFilter && statFilter !== 'all'){
+    list = statFilter === 'hist'
+      ? all.filter(p=>isHistory(p, curTab))                       // 완료 2주 경과 이력만
+      : active.filter(p=>statusOf(p, curTab) === statFilter);     // 해당 상태만
+    pageInfo.textContent = `${FILTER_LABEL[statFilter]} ${list.length}${tr('건')} ${tr('표시 중')}`;
+    headNote = `<div class="searchNote">▶ <b>${FILTER_LABEL[statFilter]}</b> ${tr('항목만 표시 중입니다. 위 카드를 다시 클릭하면 전체 보기로 돌아갑니다.')}</div>`;
+  }else{
+    list = active;
+    pageInfo.textContent = active.length > PAGE_SIZE
+      ? `${tr('총')} ${active.length}${tr('건')} · ${tr('화면당')} ${PAGE_SIZE} ${tr('(스크롤)')}` : '';
+  }
+
+  // 조회 기간 필터 적용
+  if(dateFrom || dateTo){
+    list = list.filter(inDateRange);
+    const rangeTxt = `${dateFrom||tr('처음')} ~ ${dateTo||tr('지금')}`;
+    pageInfo.textContent = `${tr('조회기간')} ${rangeTxt} · ${list.length}${tr('건')}`;
+    headNote += `<div class="searchNote">📅 <b>${rangeTxt}</b> ${tr('기간 항목만 표시 중입니다 (접수일·납기일·진행일 기준).')}</div>`;
+  }
+
+  if(!list.length){
+    board.innerHTML = headNote + (
+      (dateFrom||dateTo)
+      ? `<div class="empty"><b>${tr('해당 기간에 항목이 없습니다.')}</b><br>${tr('기간을 조정하거나 📅 옆 ✕ 로 초기화하세요.')}</div>`
+      : searching
+      ? `<div class="empty"><b>${tr('검색 결과가 없습니다.')}</b><br>${tr('제품명, 번호, 담당자, 지사, 비고 내용으로 검색할 수 있습니다.')}</div>`
+      : (statFilter && statFilter!=='all')
+        ? `<div class="empty"><b>${FILTER_LABEL[statFilter]} ${tr('항목이 없습니다.')}</b></div>`
+        : `<div class="empty"><b>${tr('등록된 항목이 없습니다.')}</b><br><b>${tr(T.addLabel)}</b> ${tr('버튼으로 등록하세요.')}</div>`);
+    return;
+  }
+  board.innerHTML = headNote + list.map(p=>{
+    const st = statusOf(p, curTab);
+    const hist = isHistory(p, curTab);
+    const stColor = st==='late'?'var(--red)':st==='done'?'var(--green)':st==='wait'?'var(--sub)':'var(--blue)';
+    const es = effStage(p, curTab);
+    const steps = getStages(curTab).map((s,i)=>`
+      <div class="step ${i<=es?'on':''} ${i===es&&st!=='done'?'cur':''}" style="--c:${s.color}"
+           onclick="event.stopPropagation();onStep('${p.id}',${i})" title="${tr(s.name)} ${i<=es?tr('완료'):tr('미완료')} (${tr('클릭하여 변경')})">
+        <div class="bar"></div>
+        <div class="node">${i<=es?'✓':s.n}</div>
+        <div class="sname">${tr(s.name)}</div>
+        ${(()=>{ const d=(p.sdates&&p.sdates[i]) || (s.dateKey&&p[s.dateKey]);
+                 return d ? `<div class="sdate">${d.slice(5).replace('-','/')}</div>` : ''; })()}
+      </div>`).join('');
+    const metaHtml = T.meta.map(m=> p[m.key] ?
+      `<div class="mcell"><div class="mlabel">${tr(m.label||'')}</div><div class="mvalue">${esc(p[m.key])}${m.post||''}</div></div>` : '').join('');
+    const code = T.codeKey && p[T.codeKey] ? `<div class="code" style="--tc:${T.color}">${T.codePrefix}${esc(p[T.codeKey])}</div>` : '';
+    let qtyHtml = '';
+    if(T.hasQty){
+      const pct = p.target ? Math.min(100, Math.round((p.done||0)/p.target*100)) : 0;
+      qtyHtml = `<div class="qty">
+        <div class="nums"><b>${(p.done||0).toLocaleString()} / ${(p.target||0).toLocaleString()}</b><span>${pct}%</span></div>
+        <div class="pbar"><i style="width:${pct}%"></i></div>
+      </div>`;
+    }
+    const note = p.note||[p.note1,p.note2].filter(Boolean).join('\n');
+    const hwTable = (p.hwItems && p.hwItems.length)
+      ? `<div class="hwtable">
+           <div class="hwt-h"><span>H/W Components</span><span>${tr('수량')}</span></div>
+           ${p.hwItems.map(it=>`<div class="hwt-r"><span class="hwt-d">${esc(it.d)}</span><span class="hwt-q">${it.q||''}</span></div>`).join('')}
+         </div>` : '';
+    const clickable = true;   // 모든 탭(생산/PO/A/S)에서 카드 클릭 시 상세 팝업
+    return `
+    <div class="card ${clickable?'clickable':''} ${st==='done'?'done':''} ${st==='late'?'late':''}"
+         style="--cstatus:${stColor}" ${clickable?`onclick="openDetail('${p.id}')"`:''}>
+      <div class="vhead">
+        <div class="vhead-l">
+          ${code}
+          <div class="name">${esc(p.name)}</div>
+        </div>
+        <span class="badge ${hist?'hist':st}">${hist?tr('생산 이력'):statusText(st)}</span>
+      </div>
+      ${metaHtml?`<div class="meta">${metaHtml}</div>`:''}
+      <div class="track">${steps}</div>
+      ${qtyHtml}
+      ${hwTable}
+      <div class="notes">
+        <div class="note"><b>${tr('비고')}</b><span class="${note?'':'noteEmpty'}">${note?esc(note):'—'}</span></div>
+      </div>
+      <div class="actions">
+        ${clickable?`<button class="icon-btn" onclick="event.stopPropagation();openDetail('${p.id}')" title="${tr('확대 보기')}">⤢</button>`:''}
+        <button class="icon-btn" onclick="event.stopPropagation();onEdit('${p.id}')" title="${tr('수정')}">✎</button>
+        <button class="icon-btn del" onclick="event.stopPropagation();deleteItem('${p.id}')" title="${tr('삭제')}">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ── 카드 확대 팝업 (PO / A/S) ── */
+window.openDetail = (id)=>{
+  const p = state[curTab].find(x=>x.id===id); if(!p) return;
+  const T = TABS[curTab];
+  const st = statusOf(p, curTab);
+  const stages = getStages(curTab);
+  const fieldRows = T.fields
+    .filter(f=>p[f.key]!==undefined && p[f.key]!=='' && f.key!=='name')
+    .map(f=>`<div class="drow"><b>${tr(f.label)}</b><span>${esc(p[f.key])}</span></div>`).join('');
+  const esD = effStage(p, curTab);
+  const stageRows = stages.map((s,i)=>{
+    const done = i<=esD;
+    const cur = i===esD && st!=='done';
+    const date = (p.sdates&&p.sdates[i]) || (s.dateKey&&p[s.dateKey]) || '';
+    return `<div class="dstage ${done?'on':''} ${cur?'cur':''}" style="--c:${s.color}">
+      <span class="dnode">${done?'✓':(i+1)}</span>
+      <span class="dsname">${esc(tr(s.name))}</span>
+      <span class="ddate">${date?esc(date):'-'}</span>
+    </div>`;
+  }).join('');
+  const note = p.note || [p.note1,p.note2].filter(Boolean).join('\n');
+  const hwSection = (p.hwItems && p.hwItems.length) ? `
+    <div class="dsection">H/W Components</div>
+    <div class="hwtable big">
+      <div class="hwt-h"><span>Description</span><span>${tr('수량')}</span></div>
+      ${p.hwItems.map(it=>`<div class="hwt-r"><span class="hwt-d">${esc(it.d)}</span><span class="hwt-q">${it.q||''}</span></div>`).join('')}
+    </div>` : '';
+  // 생산 탭: 수량 진행률
+  let qtySection = '';
+  if(T.hasQty){
+    const pct = p.target ? Math.min(100, Math.round((p.done||0)/p.target*100)) : 0;
+    qtySection = `
+    <div class="dsection">${tr('수량 진행')}</div>
+    <div class="qty" style="padding:2px 0">
+      <div class="nums" style="font-size:16px"><b>${(p.done||0).toLocaleString()} / ${(p.target||0).toLocaleString()}</b><span style="font-size:14px">${pct}%</span></div>
+      <div class="pbar"><i style="width:${pct}%"></i></div>
+    </div>`;
+  }
+  document.getElementById('detailBody').innerHTML = `
+    <div class="dtop">
+      <div>
+        ${T.codeKey&&p[T.codeKey]?`<div class="dcode" style="color:${T.color}">${T.codePrefix}${esc(p[T.codeKey])}</div>`:''}
+        <div class="dname">${esc(p.name)}</div>
+      </div>
+      <span class="badge ${st}">${statusText(st)}</span>
+    </div>
+    <div class="dsection">${tr('기본 정보')}</div>
+    <div class="dgrid">${fieldRows||'<div class="dnote">-</div>'}</div>
+    ${qtySection}
+    <div class="dsection">${tr('진행 단계')}</div>
+    <div class="dstages">${stageRows}</div>
+    ${hwSection}
+    <div class="dsection">${tr('비고')}</div>
+    <div class="dnote">${note?esc(note):'—'}</div>`;
+  document.getElementById('detailOverlay').classList.add('show');
+};
+let detailId = null;
+(function(){
+  const dov = document.getElementById('detailOverlay');
+  // openDetail에서 열 때 현재 id 저장
+  const _open = window.openDetail;
+  window.openDetail = (id)=>{ detailId=id; _open(id); };
+  dov.onclick = e=>{ if(e.target===dov) dov.classList.remove('show'); };
+  document.getElementById('detailCloseBtn').onclick = ()=> dov.classList.remove('show');
+  document.getElementById('detailEditBtn').onclick = ()=>{
+    dov.classList.remove('show');
+    if(detailId) window.onEdit(detailId);
+  };
+  document.getElementById('detailDelBtn').onclick = ()=>{
+    if(detailId) window.deleteItem(detailId);
+  };
+})();
+
+/* ── 메인 대시보드: 전체 탭 통합 요약 ── */
+function renderHome(){
+  document.getElementById('summary').style.display = 'none';
+  document.getElementById('pageInfo').textContent = '';
+  const board = document.getElementById('board');
+  board.classList.add('home');
+  board.classList.remove('scroll');
+
+  const panels = Object.entries(TABS).map(([k,t])=>{
+    const all = state[k];
+    const active = all.filter(p=>!isHistory(p, k));
+    const c = {run:0, done:0, late:0, wait:0};
+    active.forEach(p=>c[statusOf(p,k)]++);
+    const total = active.length;
+    const donePct = total ? Math.round(c.done/total*100) : 0;
+
+    // 전체 항목 리스트 (지연 → 진행중 → 대기 → 완료 순)
+    const ORDER = {late:0, run:1, wait:2, done:3};
+    const LABEL = {late:tr('지연'), run:tr('진행중'), wait:tr('대기'), done:tr('완료')};
+    const sorted = [...active].sort((a,b)=>{
+      const d = ORDER[statusOf(a,k)] - ORDER[statusOf(b,k)];
+      return d !== 0 ? d : String(a.due||a.recv||'').localeCompare(String(b.due||b.recv||''));
+    });
+    const stg = getStages(k);
+    const listHtml = sorted.length ? sorted.map(p=>{
+      const st = statusOf(p,k);
+      const es = effStage(p, k);
+      const stageName = (es>=0 && es<stg.length) ? tr(stg[es].name) : tr('대기');
+      const dt = p.due || p.recv || '';
+      return `<div class="hrow ${st}">
+        <span class="hdot"></span>
+        <span class="hst ${st}">${LABEL[st]}</span>
+        <span class="hname">${esc(p.name)}</span>
+        <span class="hstage">${esc(stageName)}</span>
+        <span class="hdue">${dt?dt.slice(5).replace('-','/'):''}</span>
+      </div>`;
+    }).join('') : `<div class="hempty">${tr('표시할 항목이 없습니다')}</div>`;
+
+    return `
+    <div class="hpanel" style="--pc:${t.color}" onclick="switchTab('${k}')" title="${tr(t.label)}${tr('로 이동')}">
+      <div class="hhead">
+        <div class="htitle">${tr(t.label)}</div>
+        <div class="htotal">${total}<span>${tr('건')}</span></div>
+      </div>
+      <div class="hbars">
+        <div class="hstat" style="--sc:var(--blue)"><b>${c.run}</b><span>${tr('진행중')}</span></div>
+        <div class="hstat" style="--sc:var(--sub)"><b>${c.wait}</b><span>${tr('대기')}</span></div>
+        <div class="hstat" style="--sc:var(--red)"><b>${c.late}</b><span>${tr('지연')}</span></div>
+        <div class="hstat" style="--sc:var(--green)"><b>${c.done}</b><span>${tr('완료')}</span></div>
+      </div>
+      <div class="hprog">
+        <div class="hprog-top"><span>${tr('완료율')}</span><b>${donePct}%</b></div>
+        <div class="hpbar"><i style="width:${donePct}%"></i></div>
+      </div>
+      <div class="hlist-title">${tr('진행 현황 목록')} ${c.late?`<span class="hlate">⚠ ${tr('지연')} ${c.late}</span>`:''}</div>
+      <div class="hlist">${listHtml}</div>
+      <div class="hgo">${tr(t.label)} ${tr('전체 보기 →')}</div>
+    </div>`;
+  }).join('');
+
+  // 전체 지연 합계 배너
+  let lateTotal = 0;
+  Object.keys(TABS).forEach(k=>{
+    lateTotal += state[k].filter(p=>!isHistory(p,k) && statusOf(p,k)==='late').length;
+  });
+  const banner = lateTotal
+    ? `<div class="hbanner warn">⚠ ${tr('전체 출고 지연')} <b>${lateTotal}${tr('건')}</b> ${tr('확인이 필요합니다')}</div>`
+    : `<div class="hbanner ok">✓ ${tr('현재 출고 지연 항목이 없습니다')}</div>`;
+
+  board.innerHTML = banner + `<div class="hpanels">${panels}</div>`;
+}
+
+window.onStep = (id,i)=>{
+  if(!document.body.classList.contains('edit')) return;   // 보기 모드에서는 변경 불가
+  const p=state[curTab].find(x=>x.id===id); if(p) setStage(p,i);
+};
+
+/* ── 모달 ── */
+const overlay=document.getElementById('overlay');
+function buildForm(p={}){
+  const T = TABS[curTab];
+  let html='', halfBuf=[];
+  // PO 탭: 파일 불러오기(자동 입력) UI
+  if(curTab === 'po'){
+    html += `<div class="importBox">
+      <label class="importLabel">${tr('📄 PO 파일 불러오기 (PDF / HTML)')}
+        <input type="file" id="mf-import" accept=".pdf,.html,.htm" onchange="onImportFile(event)" style="display:none">
+      </label>
+      <div id="importStatus" class="importStatus">${tr('파일을 선택하면 PO No.·접수일·지사·납기일·제품명·수량이 자동 입력됩니다')}</div>
+    </div>`;
+  }
+  const flush=()=>{ if(halfBuf.length){ html+=`<div class="row2">${halfBuf.join('')}</div>`; halfBuf=[]; } };
+  T.fields.forEach(f=>{
+    const val = p[f.key] ?? '';
+    const inp = `<div class="field"><label>${tr(f.label)}</label>
+      <input id="mf-${f.key}" type="${f.type||'text'}" ${f.type==='number'?'min="0"':''} placeholder="${f.ph||''}" value="${esc(val)}"></div>`;
+    if(f.half){ halfBuf.push(inp); if(halfBuf.length===2) flush(); }
+    else { flush(); html+=inp; }
+  });
+  flush();
+  // 단계별 진행 날짜 (2열)
+  const stages = getStages(curTab);
+  const sd = p.sdates || {};
+  html += `<div style="font-size:12px;color:var(--sub);font-weight:700;margin:14px 0 8px;border-top:1px dashed var(--line);padding-top:12px">${tr('단계별 진행 날짜')} <span style="font-weight:500;color:var(--dim)">${tr('(단계 클릭 시 자동 기록, 직접 수정 가능)')}</span></div>`;
+  for(let i=0; i<stages.length; i+=2){
+    const cell = j => j<stages.length
+      ? `<div class="field"><label>${tr(stages[j].name)}</label><input id="mf-sd-${j}" type="date" value="${esc(sd[j]||'')}"></div>`
+      : '<div></div>';
+    html += `<div class="row2">${cell(i)}${cell(i+1)}</div>`;
+  }
+  // H/W Components 표 (PO / A/S)
+  if(curTab==='po' || curTab==='as'){
+    html += `<div style="font-size:12px;color:var(--sub);font-weight:700;margin:14px 0 8px;border-top:1px dashed var(--line);padding-top:12px">H/W Components <span style="font-weight:500;color:var(--dim)">${tr('(Description · 수량 — PO 파일 불러오기 시 자동 입력)')}</span></div>
+      <div class="hwedit">
+        <div class="hwedit-head"><span>Description</span><span>${tr('수량')}</span><span></span></div>
+        <div id="hwEditRows">${hwRowsHtml(p.hwItems)}</div>
+        <button type="button" class="hbtn" onclick="hwAddRowUI()" style="width:100%;margin-top:6px">${tr('+ 항목 추가')}</button>
+      </div>`;
+  }
+  // 비고 (단일 항목)
+  const noteVal = p.note ?? [p.note1, p.note2].filter(Boolean).join('\n');
+  html += `<div style="font-size:12px;color:var(--sub);font-weight:700;margin:14px 0 8px;border-top:1px dashed var(--line);padding-top:12px">${tr('비고')}</div>
+    <div class="field"><textarea id="mf-note" class="noteArea" placeholder="${tr('비고 내용 (특이사항, 요청사항 등)')}">${esc(noteVal)}</textarea></div>`;
+  document.getElementById('modalFields').innerHTML = html;
+  // 날짜 입력(달력)은 사용자 시스템 언어 설정을 따름
+  document.querySelectorAll('#modalFields input[type=date]').forEach(el=>el.removeAttribute('lang'));
+}
+/* H/W Components 편집 행 */
+function hwRowHtml(d='', q=''){
+  return `<div class="hwrow">
+    <input class="hw-d" placeholder="예: ABC-100 Controller H/W" value="${esc(d)}">
+    <input class="hw-q" type="number" min="0" placeholder="${tr('수량')}" value="${(q!==''&&q!=null)?q:''}">
+    <button type="button" class="icon-btn del" onclick="hwDelRowUI(this)" title="${tr('삭제')}">✕</button>
+  </div>`;
+}
+function hwRowsHtml(items){
+  const arr = (items && items.length) ? items : [{d:'',q:''}];
+  return arr.map(it=>hwRowHtml(it.d, it.q)).join('');
+}
+window.hwAddRowUI = ()=>{ document.getElementById('hwEditRows').insertAdjacentHTML('beforeend', hwRowHtml()); };
+window.hwDelRowUI = (btn)=>{
+  const rows = document.querySelectorAll('#hwEditRows .hwrow');
+  if(rows.length<=1){ btn.closest('.hwrow').querySelectorAll('input').forEach(i=>i.value=''); return; }
+  btn.closest('.hwrow').remove();
+};
+function collectHwItems(){
+  return [...document.querySelectorAll('#hwEditRows .hwrow')].map(r=>({
+    d: r.querySelector('.hw-d').value.trim(),
+    q: parseInt(r.querySelector('.hw-q').value)||0
+  })).filter(x=>x.d);
+}
+window.onEdit = (id)=>{
+  const p=state[curTab].find(x=>x.id===id); if(!p) return;
+  editId=id;
+  document.getElementById('modalTitle').textContent = tr(TABS[curTab].unit) + ' ' + tr('수정');
+  buildForm(p);
+  overlay.classList.add('show');
+};
+
+/* ════════ PO 파일(PDF/HTML) 자동 인식 ════════ */
+let pdfReady = false;
+async function ensurePdfJs(){
+  if(pdfReady) return;
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  pdfReady = true;
+}
+async function pdfToLines(buf){
+  const pdf = await window.pdfjsLib.getDocument({data:buf}).promise;
+  const lines = [];
+  for(let pg=1; pg<=pdf.numPages; pg++){
+    const page = await pdf.getPage(pg);
+    const tc = await page.getTextContent();
+    const rows = {};
+    tc.items.forEach(it=>{
+      const y = Math.round(it.transform[5]);
+      (rows[y] = rows[y] || []).push({x:it.transform[4], s:it.str});
+    });
+    Object.keys(rows).map(Number).sort((a,b)=>b-a).forEach(y=>{
+      const line = rows[y].sort((a,b)=>a.x-b.x).map(o=>o.s).join(' ').replace(/\s+/g,' ').trim();
+      if(line) lines.push(line);
+    });
+  }
+  return lines;
+}
+function decodeEntities(s){
+  const t=document.createElement('textarea'); t.innerHTML=s; return t.value;
+}
+function parseHtmlFile(raw){
+  // 표 구조 추출
+  const doc = new DOMParser().parseFromString(raw, 'text/html');
+  const tables = [...doc.querySelectorAll('table')].map(tb=>
+    [...tb.querySelectorAll('tr')].map(tr=>
+      [...tr.querySelectorAll('th,td')].map(td=>td.textContent.replace(/\s+/g,' ').trim())
+    )
+  );
+  // 라벨:값 추출용 줄 텍스트
+  let txt = raw
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi,' ')
+    .replace(/<br\s*\/?>/gi,'\n')
+    .replace(/<\/(p|div|tr|li|h\d|td|th|table)>/gi,'\n')
+    .replace(/<[^>]+>/g,' ');
+  txt = decodeEntities(txt).split('\n').map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean).join('\n');
+  return {tables, lineText:txt, lines:txt.split('\n')};
+}
+function pad2(n){ return String(n).padStart(2,'0'); }
+function parseDate(s){
+  if(!s) return '';
+  let m = s.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+  if(m) return `${m[1]}-${pad2(m[2])}-${pad2(m[3])}`;
+  m = s.match(/(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})/);
+  if(m) return `${m[3]}-${pad2(m[2])}-${pad2(m[1])}`;   // dd/mm/yyyy 가정
+  const mo={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  m = s.match(/(\d{1,2})\s*([A-Za-z]{3,})\.?,?\s*(\d{4})/);
+  if(m && mo[m[2].slice(0,3).toLowerCase()]) return `${m[3]}-${pad2(mo[m[2].slice(0,3).toLowerCase()])}-${pad2(m[1])}`;
+  m = s.match(/([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s*(\d{4})/);
+  if(m && mo[m[1].slice(0,3).toLowerCase()]) return `${m[3]}-${pad2(mo[m[1].slice(0,3).toLowerCase()])}-${pad2(m[2])}`;
+  return '';
+}
+function grab(text, labelSrc){
+  const re = new RegExp(labelSrc + '\\s*[:\\-]?\\s*([^\\n]+)', 'i');
+  const m = text.match(re); return m ? m[1].trim() : '';
+}
+function endsHW(s){ return /H\s*\/?\s*W\s*$/i.test((s||'').trim()); }   // 'HW' 및 'H/W' 모두 인식
+function cleanName(s){ return s.replace(/^\s*\d+[\.\)]?\s*/,'').replace(/\s*H\s*\/?\s*W\s*$/i,'').trim(); }
+
+/* HW Components 첫 행에서 제품명(끝이 HW) + 수량 추출 */
+function extractHwRow(tables, lines){
+  // 1) 표 우선
+  for(const tb of tables){
+    for(const row of tb){
+      const di = row.findIndex(c=>endsHW(c));
+      if(di>=0){
+        let qty=0;
+        for(let j=di+1;j<row.length;j++){ const mm=row[j].match(/^\d[\d,]*$/); if(mm){ qty=parseInt(row[j].replace(/,/g,'')); break; } }
+        if(!qty) for(const c of row){ const mm=c.match(/\b(\d{1,6})\b/); if(mm && +mm[1]!==0 && !endsHW(c)){ qty=+mm[1]; break; } }
+        return {name:cleanName(row[di]), qty};
+      }
+    }
+  }
+  // 2) 줄 기반 (PDF) — HW Components 이후 첫 HW 포함 줄
+  let start = lines.findIndex(l=>/h\s*\/?\s*w\s*components/i.test(l));
+  if(start<0) start = 0;
+  for(let i=start;i<lines.length;i++){
+    const line = lines[i];
+    if(!/H\s*\/?\s*W\b/i.test(line)) continue;
+    const m = line.match(/(.+H\s*\/?\s*W)\b/i);   // 마지막 HW/H/W까지 (greedy)
+    if(!m) continue;
+    const rem = line.slice(m.index + m[1].length);
+    const qn = rem.match(/(\d[\d,]*)/);
+    return {name:cleanName(m[1]), qty: qn ? parseInt(qn[1].replace(/,/g,'')) : 0};
+  }
+  return {name:'', qty:0};
+}
+function extractPO(lineText, lines, tables){
+  const po = (lineText.match(/purchase\s*order\s*no\.?\s*[:\-]?\s*([A-Za-z0-9][\w\-\/]*)/i)||[])[1] || '';
+  const recv = parseDate(grab(lineText, 'date\\s*issued'));
+  const branch = grab(lineText, 'branch');
+  const due = parseDate(grab(lineText, 'delivery\\s*time'));
+  const hw = extractHwRow(tables, lines);
+  const hwItems = extractHwItems(lines, tables);
+  return {po, recv, branch, due, name:hw.name, qty:hw.qty, hwItems};
+}
+
+/* HW Components 내역을 [{d:설명, q:수량}, ...] 구조로 추출 (표로 표시용) */
+function extractHwItems(lines, tables){
+  const items = [];
+  const isHeaderCell = c=>/desc|품명|item\b|part|quantity|qty|수량|unit|^no\.?$|^#$/i.test(c);
+  // 1) 표 우선
+  for(const tb of tables){
+    if(!tb.length) continue;
+    const hasHW = tb.some(r=>r.some(c=>endsHW(c)));
+    const headerRow = tb.find(r=>r.some(c=>/desc|품명|item\b|part/i.test(c)));
+    if(!hasHW && !headerRow) continue;   // HW 표가 아니면 건너뜀
+    const hdr = headerRow || tb[0];
+    const descCol = hdr.findIndex(c=>/desc|품명|item\b|part/i.test(c));
+    const qtyCol  = hdr.findIndex(c=>/qty|quantity|수량|q'?ty/i.test(c));
+    const startIdx = headerRow ? tb.indexOf(headerRow)+1 : 0;
+    for(let ri=startIdx; ri<tb.length; ri++){
+      const row = tb[ri]; if(!row.length) continue;
+      let d, q;
+      if(descCol>=0){ d = row[descCol]; q = qtyCol>=0 ? row[qtyCol] : ''; }
+      else{
+        d = row.reduce((a,b)=>(b && !/^\d[\d,]*$/.test(b) && b.length>(a?a.length:0))?b:a,'');
+        q = (row.find(c=>/^\d[\d,]*$/.test(c))||'');
+      }
+      d = (d||'').trim();
+      if(d && !isHeaderCell(d)) items.push({d, q:parseInt(String(q).replace(/,/g,''))||0});
+    }
+    if(items.length) return items;
+  }
+  // 2) 줄 기반(PDF)
+  let start = lines.findIndex(l=>/h\s*\/?\s*w\s*components/i.test(l));
+  if(start<0) return items;
+  for(let i=start+1;i<lines.length;i++){
+    const l=lines[i]; if(!l) break;
+    if(/^(sw\s*components|s\/w|software|firmware|accessor|terms|conditions|total\b|sub\s*total|remarks?|비고|기타|special\s*note)/i.test(l)) break;
+    if(/^(no\.?|#|description|desc|품명|item|part|qty|quantity|수량|unit)\b/i.test(l)) continue;   // 헤더행
+    const m = l.match(/^(?:\d+[\.\)]?\s+)?(.+?)\s+(\d[\d,]*)\s*(?:ea|pcs?|set|개|unit)?\.?\s*$/i);
+    if(m && m[1].trim()) items.push({d:m[1].trim(), q:parseInt(m[2].replace(/,/g,''))||0});
+  }
+  return items;
+}
+window.onImportFile = async (e)=>{
+  const file = e.target.files[0]; if(!file) return;
+  const status = document.getElementById('importStatus');
+  status.className = 'importStatus'; status.textContent = tr('파일 분석 중...');
+  try{
+    let lines=[], tables=[], lineText='';
+    if(/\.pdf$/i.test(file.name)){
+      await ensurePdfJs();
+      lines = await pdfToLines(await file.arrayBuffer());
+      lineText = lines.join('\n');
+    }else{
+      const parsed = parseHtmlFile(await file.text());
+      lines = parsed.lines; tables = parsed.tables; lineText = parsed.lineText;
+    }
+    const d = extractPO(lineText, lines, tables);
+    const set = (id,v)=>{ const el=document.getElementById(id); if(el && v){ el.value=v; return true; } return false; };
+    const done=[];
+    if(set('mf-po', d.po)) done.push(tr('PO No.'));
+    if(set('mf-recv', d.recv)) done.push(tr('PO 접수일'));
+    if(set('mf-branch', d.branch)) done.push(tr('담당 지사'));
+    if(set('mf-due', d.due)) done.push(tr('출하 납기일'));
+    if(set('mf-name', d.name)) done.push(tr('제품명'));
+    if(d.qty && set('mf-qty', String(d.qty))) done.push(tr('수량'));
+    if(d.hwItems && d.hwItems.length){
+      const box = document.getElementById('hwEditRows');
+      if(box){ box.innerHTML = hwRowsHtml(d.hwItems); done.push(`H/W Components ${tr('표 ')}${d.hwItems.length}${tr('행')}`); }
+    }
+    if(done.length){
+      status.className='importStatus ok';
+      status.textContent = `✓ ${tr('자동 입력됨')}: ${done.join(', ')}\n${tr('(내용을 확인하고 필요 시 직접 수정하세요)')}`;
+    }else{
+      status.className='importStatus warn';
+      status.textContent = '⚠ ' + tr('인식된 항목이 없습니다. 파일 형식을 확인하거나 직접 입력하세요.');
+    }
+  }catch(err){
+    status.className='importStatus warn';
+    status.textContent = '⚠ ' + tr('분석 실패') + ': ' + err.message;
+  }
+};
+/* ════════════════════════════════════════════ */
+document.getElementById('addBtn').onclick=()=>{
+  editId=null;
+  document.getElementById('modalTitle').textContent = tr(TABS[curTab].unit) + ' ' + tr('추가');
+  buildForm();
+  overlay.classList.add('show');
+  const first=document.querySelector('#modalFields input'); if(first) first.focus();
+};
+document.getElementById('cancelBtn').onclick=()=>overlay.classList.remove('show');
+/* 추가/수정 팝업은 바깥을 클릭해도 닫히지 않음 (작성 중 실수 방지 — 취소/저장 버튼으로만 닫힘) */
+document.getElementById('saveBtn').onclick=async ()=>{
+  const T = TABS[curTab];
+  const p={};
+  for(const f of T.fields){
+    const el=document.getElementById('mf-'+f.key);
+    p[f.key] = f.type==='number' ? (+el.value||0) : el.value.trim();
+  }
+  // 단계별 날짜
+  const sdates={};
+  getStages(curTab).forEach((s,i)=>{
+    const el=document.getElementById('mf-sd-'+i);
+    if(el && el.value) sdates[i]=el.value;
+  });
+  p.sdates = sdates;
+  // 입력된 단계별 날짜에 맞춰 진행 단계 자동 동기화
+  {
+    const len = getStages(curTab).length;
+    let last = -1;
+    for(let i=0;i<len;i++) if(sdates[i]) last = i;
+    p.stage = last;
+  }
+  // H/W Components 표
+  if(document.getElementById('hwEditRows')) p.hwItems = collectHwItems();
+  // 비고 (단일)
+  p.note = document.getElementById('mf-note').value.trim();
+  p.note1 = ''; p.note2 = '';   // 구 필드 정리 (하위 호환)
+  const nameEl = document.getElementById('mf-name');
+  if(!p.name){ if(nameEl) nameEl.focus(); return; }
+  if(editId) p.id=editId;
+  await saveItem(p);
+  overlay.classList.remove('show');
+};
+
+/* ── 진행 단계 설정 (이름 변경 / 추가 / 삭제) ── */
+const stageOverlay = document.getElementById('stageOverlay');
+async function saveStageNames(tab, names){
+  stageNames[tab] = names;
+  if(db) await db.collection('settings').doc('stages_'+tab).set({names}, {merge:true});
+  render();
+}
+function drawStageRows(names){
+  document.getElementById('stageFields').innerHTML = names.map((nm,i)=>`
+    <div class="field" style="display:flex; gap:8px; align-items:flex-end">
+      <div style="flex:1">
+        <label>${tr('단계')} ${i+1}${i===names.length-1?' <span style="color:var(--green)">'+tr('(최종 단계)')+'</span>':''}</label>
+        <input class="sn-input" value="${esc(nm)}" maxlength="12" placeholder="${tr('단계 이름')}">
+      </div>
+      <button class="icon-btn del sn-del" data-i="${i}" title="${tr('이 단계 삭제')}" ${names.length<=2?'disabled style="opacity:.3;cursor:not-allowed"':''}>✕</button>
+    </div>`).join('') + `
+    <button class="hbtn" id="stageAddRow" style="width:100%; margin-top:4px">+ 단계 추가</button>`;
+  // 삭제 버튼
+  document.querySelectorAll('.sn-del').forEach(btn=>{
+    btn.onclick=()=>{
+      const cur = collectStageInputs();
+      if(cur.length<=2){ alert('단계는 최소 2개 이상이어야 합니다.'); return; }
+      cur.splice(+btn.dataset.i,1);
+      drawStageRows(cur);
+    };
+  });
+  // 추가 버튼
+  document.getElementById('stageAddRow').onclick=()=>{
+    const cur = collectStageInputs();
+    if(cur.length>=8){ alert('단계는 최대 8개까지 가능합니다.'); return; }
+    cur.splice(cur.length-1, 0, '새 단계');   // 최종 단계 앞에 삽입
+    drawStageRows(cur);
+  };
+}
+function collectStageInputs(){
+  return [...document.querySelectorAll('.sn-input')].map(el=>el.value.trim() || '단계');
+}
+document.getElementById('stageBtn').onclick=()=>{
+  const T = TABS[curTab];
+  document.getElementById('stageModalTitle').textContent = `${tr(T.label)} · ${tr('진행 단계 설정')}`;
+  drawStageRows(getStages(curTab).map(s=>s.name));
+  stageOverlay.classList.add('show');
+};
+document.getElementById('stageCancelBtn').onclick=()=>stageOverlay.classList.remove('show');
+stageOverlay.onclick=e=>{ if(e.target===stageOverlay) stageOverlay.classList.remove('show'); };
+document.getElementById('stageSaveBtn').onclick=async ()=>{
+  const names = collectStageInputs();
+  if(names.length<2){ alert('단계는 최소 2개 이상이어야 합니다.'); return; }
+  await saveStageNames(curTab, names);
+  stageOverlay.classList.remove('show');
+};
+document.getElementById('stageResetBtn').onclick=async ()=>{
+  if(!confirm('이 탭의 진행 단계를 기본값으로 되돌릴까요?')) return;
+  stageNames[curTab] = null;
+  if(db) await db.collection('settings').doc('stages_'+curTab).delete();
+  render();
+  stageOverlay.classList.remove('show');
+};
+
+/* ── 코드 편집 모드 ── */
+const codeOverlay = document.getElementById('codeOverlay');
+const codeText = document.getElementById('codeText');
+let codeLoaded = false;
+
+async function loadSelfSource(){
+  const status = document.getElementById('codeStatus');
+  status.textContent = '원본 코드 불러오는 중...';
+  try{
+    // 서버(http/https)에서 실행 중이면 자기 자신 파일을 그대로 읽어옴
+    const res = await fetch(location.href, {cache:'no-store'});
+    if(!res.ok) throw new Error('fetch 실패');
+    const txt = await res.text();
+    codeText.value = txt;
+    status.textContent = `원본 코드 (${txt.length.toLocaleString()}자) 불러옴`;
+  }catch(e){
+    // file://로 직접 열었거나 접근 불가 시 현재 DOM 기준으로 대체
+    codeText.value = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+    status.textContent = '⚠ 파일 직접 접근 불가 → 현재 화면 기준 코드 (일부 동적 내용 포함될 수 있음)';
+  }
+  codeLoaded = true;
+}
+document.getElementById('codeBtn').onclick = async ()=>{
+  codeOverlay.classList.add('show');
+  if(!codeLoaded) await loadSelfSource();
+};
+document.getElementById('codeReloadBtn').onclick = ()=>{
+  if(confirm('편집 중인 내용을 버리고 원본 코드를 다시 불러올까요?')){ codeLoaded=false; loadSelfSource(); }
+};
+document.getElementById('codeCloseBtn').onclick = ()=> codeOverlay.classList.remove('show');
+document.getElementById('codePreviewBtn').onclick = ()=>{
+  const blob = new Blob([codeText.value], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+};
+document.getElementById('codeDownloadBtn').onclick = ()=>{
+  const blob = new Blob([codeText.value], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'production-dashboard.html';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  document.getElementById('codeStatus').textContent = '다운로드 완료 — 기존 파일을 교체하세요';
+};
+
+/* ── 실시간 적용 ── */
+function markApplied(ts){ try{ localStorage.setItem('pd_applied_ts', String(ts)); }catch(e){} }
+function writeDocument(html){ document.open(); document.write(html); document.close(); }
+
+// 이 화면에만 즉시 적용
+document.getElementById('codeApplyBtn').onclick = ()=>{
+  if(!confirm('수정한 코드를 지금 이 화면에 즉시 적용할까요?\n(문제가 생기면 주소 끝에 #safe 를 붙여 다시 열면 됩니다)')) return;
+  writeDocument(codeText.value);
+};
+// Firebase로 저장해 모든 화면에 실시간 적용
+document.getElementById('codeApplyAllBtn').onclick = async ()=>{
+  if(!db){ alert('Firebase가 연결되어 있지 않아 전체 적용을 사용할 수 없습니다.\n상단 코드의 firebaseConfig를 설정한 뒤 이용하세요.\n(지금은 "⚡ 이 화면 적용" 또는 "⤓ 다운로드"를 사용하세요.)'); return; }
+  if(!confirm('수정한 코드를 모든 접속 화면에 실시간으로 적용할까요?\n연결된 모든 모니터/PC 화면이 즉시 새 코드로 전환됩니다.\n\n※ 잘못된 코드는 전체 화면을 멈출 수 있습니다. 문제가 생기면 각 화면 주소 끝에 #safe 를 붙여 열고 "♻ 전체 복구"를 누르세요.')) return;
+  const ts = Date.now();
+  markApplied(ts);   // 내 화면은 재적용 방지
+  try{
+    await db.collection('settings').doc('appCode').set({html:codeText.value, ts});
+    writeDocument(codeText.value);
+  }catch(e){ alert('저장 실패: '+e.message); }
+};
+// 전체 실시간 적용 해제 → 원본 파일로 복구
+document.getElementById('codeRestoreBtn').onclick = async ()=>{
+  if(!db){ alert('Firebase 미연결 상태입니다.'); return; }
+  if(!confirm('전체 실시간 적용을 해제하고 서버의 원본 파일로 복구할까요?\n모든 화면이 원본 코드로 되돌아갑니다.')) return;
+  try{
+    await db.collection('settings').doc('appCode').delete();
+    try{ localStorage.removeItem('pd_applied_ts'); }catch(e){}
+    location.href = location.pathname + location.search;   // 해시 제거 후 원본 재로드
+  }catch(e){ alert('복구 실패: '+e.message); }
+};
+// Tab 키로 들여쓰기 (편집기 이탈 방지)
+codeText.addEventListener('keydown', e=>{
+  if(e.key === 'Tab'){
+    e.preventDefault();
+    const s=codeText.selectionStart, en=codeText.selectionEnd;
+    codeText.value = codeText.value.slice(0,s) + '  ' + codeText.value.slice(en);
+    codeText.selectionStart = codeText.selectionEnd = s+2;
+  }
+});
+
+/* ── 언어 전환 (한국어 / English / 日本語) ── */
+function applyLang(l){
+  lang = l;
+  // html lang은 시스템 로케일 유지 (달력·시계가 윈도우 설정을 따르도록)
+  document.body.setAttribute('data-lang', l);
+  const set = (id, txt)=>{ const el=document.getElementById(id); if(el) el.textContent = txt; };
+  set('stageBtn', tr('⚙ 단계명'));
+  set('codeBtn', '</> ' + (l==='ko'?'코드 편집':(l==='ja'?'コード編集':'Code')));
+  set('fsBtn', document.fullscreenElement ? tr('⛶ 전체화면 해제') : tr('⛶ 전체화면'));
+  set('themeBtn', document.body.classList.contains('light') ? tr('🌙 다크 모드') : tr('☀ 라이트 모드'));
+  set('confirmTitle', tr('삭제 확인'));
+  set('confirmCancel', tr('취소'));
+  set('confirmOk', tr('삭제'));
+  set('detailEditBtn', tr('✎ 수정'));
+  set('detailDelBtn', tr('✕ 삭제'));
+  set('detailCloseBtn', tr('닫기'));
+  set('cancelBtn', tr('취소'));
+  set('saveBtn', tr('저장'));
+  set('stageCancelBtn', tr('취소'));
+  set('stageSaveBtn', tr('저장'));
+  set('stageResetBtn', tr('기본값 복원'));
+  const eb = document.querySelector('.editBadge'); if(eb) eb.textContent = tr('✎ 편집 모드');
+  const sb = document.getElementById('searchBox'); if(sb) sb.placeholder = tr('🔍 제품 검색 (생산이력 포함)');
+  const dl = document.querySelector('.drlabel'); if(dl) dl.textContent = tr('📅 기간');
+  const sel = document.getElementById('langSel'); if(sel) sel.value = l;
+  // 날짜 입력(달력)은 사용자 시스템(윈도우) 언어 설정을 그대로 따름
+  document.querySelectorAll('input[type=date]').forEach(el=>el.removeAttribute('lang'));
+  // 툴팁
+  const setTitle = (sel2, txt)=>{ const el=document.querySelector(sel2); if(el) el.title = txt; };
+  setTitle('.daterange', tr('조회 기간 (접수일·납기일·진행일 기준)'));
+  setTitle('#dateClear', tr('기간 초기화'));
+  setTitle('#stageBtn', tr('현재 탭의 진행 단계 이름 변경'));
+  try{ localStorage.setItem('pd_lang', l); }catch(e){}
+  if(typeof applyLangEnabled === 'function') applyLangEnabled(langEnabled);
+  if(typeof renderUserBox === 'function') renderUserBox();
+  render();
+}
+document.getElementById('langSel').addEventListener('change', e=>applyLang(e.target.value));
+try{ const sl=localStorage.getItem('pd_lang'); if(sl) lang=sl; }catch(e){}
+
+/* ── 언어 선택 버튼 표시/숨김 (편집 모드에서 설정) ── */
+let langEnabled = true;
+try{ const le=localStorage.getItem('pd_lang_enabled'); if(le!==null) langEnabled = (le==='1'); }catch(e){}
+function applyLangEnabled(on){
+  langEnabled = on;
+  document.body.classList.toggle('lang-off', !on);
+  const b = document.getElementById('langToggleBtn');
+  if(b) b.textContent = '🌐 ' + (lang==='en' ? ('Lang button: '+(on?'On':'Off'))
+                        : lang==='ja' ? ('言語ボタン: '+(on?'表示':'非表示'))
+                        : ('언어 버튼: '+(on?'표시':'숨김')));
+  try{ localStorage.setItem('pd_lang_enabled', on?'1':'0'); }catch(e){}
+}
+document.getElementById('langToggleBtn').onclick = async ()=>{
+  applyLangEnabled(!langEnabled);
+  if(db) await db.collection('settings').doc('ui').set({langEnabled}, {merge:true});
+};
+
+/* ── 밝음 / 어둠 모드 ── */
+const themeBtn = document.getElementById('themeBtn');
+function applyTheme(t){
+  const light = t === 'light';
+  document.body.classList.toggle('light', light);
+  themeBtn.textContent = light ? tr('🌙 다크 모드') : tr('☀ 라이트 모드');
+}
+themeBtn.onclick = async ()=>{
+  const next = document.body.classList.contains('light') ? 'dark' : 'light';
+  applyTheme(next);
+  if(db) await db.collection('settings').doc('ui').set({theme:next}, {merge:true});
+};
+
+/* ── 전체화면 ── */
+const fsBtn=document.getElementById('fsBtn');
+fsBtn.onclick=()=>{
+  if(document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen();
+};
+document.addEventListener('fullscreenchange',()=>{
+  const fs=!!document.fullscreenElement;
+  document.body.classList.toggle('fs',fs);
+  fsBtn.textContent = fs ? tr('⛶ 전체화면 해제') : tr('⛶ 전체화면');
+});
+
+/* ── 요약 카드 클릭 필터 ── */
+window.statClick = (f)=>{
+  statFilter = (statFilter === f) ? null : f;        // 같은 카드 재클릭 시 해제
+  document.getElementById('searchBox').value = '';   // 검색과 동시 사용 방지
+  searchQ = '';
+  render();
+  document.getElementById('board').scrollTop = 0;    // 필터 결과는 맨 위부터 표시
+};
+
+/* ── 검색 (생산이력 조회) ── */
+document.getElementById('searchBox').addEventListener('input', e=>{
+  searchQ = e.target.value.trim();
+  if(searchQ) statFilter = null;   // 검색 시작 시 상태 필터 해제
+  render();
+  document.getElementById('board').scrollTop = 0;    // 검색 결과도 맨 위부터 표시
+});
+
+/* ── 조회 날짜 기간 ── */
+function applyDateRange(){
+  dateFrom = document.getElementById('dateFrom').value;
+  dateTo   = document.getElementById('dateTo').value;
+  document.querySelector('.daterange').classList.toggle('active', !!(dateFrom||dateTo));
+  render();
+  document.getElementById('board').scrollTop = 0;
+}
+document.getElementById('dateFrom').addEventListener('change', applyDateRange);
+document.getElementById('dateTo').addEventListener('change', applyDateRange);
+document.getElementById('dateClear').onclick = ()=>{
+  document.getElementById('dateFrom').value = '';
+  document.getElementById('dateTo').value = '';
+  applyDateRange();
+};
+
+/* ── 자동 스크롤 (전체화면 모드 전용) ──
+   전체화면에서는 목록이 화면을 넘으면 천천히 아래로 스크롤되고,
+   끝에 도달하면 잠시 멈춘 뒤 맨 위로 돌아가 반복합니다.
+   일반 화면에서는 사용자가 직접 스크롤합니다. */
+const SCROLL_SPEED = 0.6;      // 프레임당 이동 픽셀 (약 36px/초)
+const PAUSE_END = 180;         // 끝 도달 후 대기 프레임 (~3초)
+const PAUSE_TOP = 150;         // 맨 위 복귀 후 대기 프레임 (~2.5초)
+let asPhase = 'top', asWait = PAUSE_TOP;
+function autoScrollTick(){
+  const board = document.getElementById('board');
+  const isFs = document.body.classList.contains('fs');
+  if(isFs && !searchQ && board){
+    const max = board.scrollHeight - board.clientHeight;
+    if(max > 2){
+      if(asPhase === 'top'){                       // 맨 위에서 잠시 대기
+        if(--asWait <= 0) asPhase = 'scroll';
+      }else if(asPhase === 'scroll'){              // 천천히 아래로
+        board.scrollTop += SCROLL_SPEED;
+        if(board.scrollTop >= max - 1){ asPhase = 'end'; asWait = PAUSE_END; }
+      }else if(asPhase === 'end'){                 // 끝에서 대기 후 맨 위로
+        if(--asWait <= 0){
+          board.scrollTo({top:0, behavior:'smooth'});
+          asPhase = 'top'; asWait = PAUSE_TOP;
+        }
+      }
+    }else{
+      board.scrollTop = 0; asPhase = 'top'; asWait = PAUSE_TOP;
+    }
+  }else{
+    asPhase = 'top'; asWait = PAUSE_TOP;           // 일반 화면: 자동 스크롤 없음
+  }
+  requestAnimationFrame(autoScrollTick);
+}
+requestAnimationFrame(autoScrollTick);
+
+/* ── 한 화면 자동 맞춤 (해상도 대응) ── */
+function fitScreen(){
+  // 세로형 카드 그리드는 스크롤로 표시하므로, 해상도(폭) 기준 배율만 적용
+  const wZoom = Math.max(1, window.innerWidth / 1920);
+  document.body.style.zoom = wZoom;
+  const main = document.getElementById('main');
+  if(main) main.style.zoom = 1;
+}
+window.addEventListener('resize', ()=>requestAnimationFrame(fitScreen));
+
+/* ── 시계 ── */
+function tick(){
+  const n=new Date();
+  document.getElementById('clockTime').textContent =
+    n.toLocaleTimeString(SYS_LOCALE,{hour12:false});
+  document.getElementById('clockDate').textContent =
+    n.toLocaleDateString(SYS_LOCALE,{year:'numeric',month:'long',day:'numeric',weekday:'long'});
+}
+setInterval(tick,1000); tick();
+
+// 안전 모드(#safe)로 열렸을 때 안내 표시
+if(location.hash.includes('safe')){
+  const b=document.querySelector('.brand small');
+  if(b){ b.textContent = 'SAFE MODE · 원본 코드 (실시간 적용 무시)'; b.style.color = 'var(--red)'; }
+}
+
+updateConn();   // LED 초기 상태 (Firebase 연결 후 자동 갱신)
+applyLang(lang);   // 저장된 언어 적용
+applyLangEnabled(langEnabled);   // 언어 버튼 표시 설정 적용
+init();
+</script>
+</body>
+</html>
