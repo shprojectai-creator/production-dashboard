@@ -1653,30 +1653,43 @@ const PDFJS_SOURCES = [
   { lib:'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js',
     worker:'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
 ];
-async function ensurePdfJs(){
-  if(pdfReady && window.pdfjsLib) return;
+async function ensurePdfJs() {
+  if (pdfReady && window.pdfjsLib) return;
   let lastErr = null;
-  for(const src of PDFJS_SOURCES){
-    try{
-      if(!window.pdfjsLib) await loadScript(src.lib);
-      if(window.pdfjsLib){
-        try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc = src.worker; }catch(e){}
+  for (const src of PDFJS_SOURCES) {
+    try {
+      if (!window.pdfjsLib) await loadScript(src.lib);
+      if (window.pdfjsLib) {
+        try {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = src.worker;
+        } catch (e) {}
         pdfReady = true;
         return;
       }
-    }catch(e){ lastErr = e; }
+    } catch (e) {
+      lastErr = e;
+    }
   }
-  throw new Error('PDF 라이브러리를 불러오지 못했습니다. 인터넷 연결 또는 사내 방화벽(cdnjs / jsdelivr / unpkg 차단)을 확인하세요.'
-    + (lastErr ? '' : ''));
+  // CDN 로드 실패 시 대체 안내 추가
+  throw new Error('PDF 라이브러리를 불러올 수 없습니다. 인터넷 연결 상태 또는 CDN 차단 여부를 확인하세요.');
 }
-async function getPdfDoc(bytes){
-  // 1차: 워커 사용 / 2차: 워커 없이(사내망에서 워커 차단 시 대비)
-  try{
-    return await window.pdfjsLib.getDocument({data:bytes}).promise;
-  }catch(e){
-    try{
-      return await window.pdfjsLib.getDocument({data:bytes, disableWorker:true, isEvalSupported:false}).promise;
-    }catch(e2){ throw e; }
+async function getPdfDoc(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer.slice(0));
+  try {
+    // 1차: 기본 워커 모드로 로드 시도
+    return await window.pdfjsLib.getDocument({ data: bytes }).promise;
+  } catch (e) {
+    console.warn('PDF Worker 모드 로드 실패, Worker 비활성화 모드로 재시도합니다:', e);
+    // 2차: 워커 차단 환경을 위한 disableWorker 옵션 적용
+    try {
+      return await window.pdfjsLib.getDocument({
+        data: bytes,
+        disableWorker: true,
+        isEvalSupported: false
+      }).promise;
+    } catch (err) {
+      throw new Error('PDF 파싱 중 오류가 발생했습니다. (스캔된 이미지 형식의 PDF는 텍스트 추출이 불가합니다)');
+    }
   }
 }
 async function pdfToLines(buf){
