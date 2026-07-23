@@ -487,6 +487,27 @@
   .userBox .urole.ed{background:rgba(245,165,36,.15); color:var(--amber)}
   .userBox .hbtn{padding:7px 12px; font-size:12px}
 
+  /* ── 코드 편집 모드 ── */
+  .codeOverlay{
+    position:fixed; inset:0; background:var(--bg); z-index:200;
+    display:none; flex-direction:column;
+  }
+  .codeOverlay.show{display:flex}
+  .codeBar{
+    display:flex; align-items:center; gap:12px; padding:14px 22px;
+    border-bottom:1px solid var(--line); background:var(--panel);
+  }
+  .codeBar h2{font-size:16px; font-weight:800; margin-right:auto}
+  .codeBar .status{font-size:12px; color:var(--sub); margin-right:auto}
+  .codeArea{flex:1; min-height:0; display:flex}
+  .codeArea textarea{
+    flex:1; width:100%; height:100%; resize:none; border:none; outline:none;
+    background:#0B0F14; color:#CFE3F5; padding:18px 22px;
+    font-family:'SFMono-Regular','Consolas','Menlo',monospace; font-size:13px; line-height:1.55;
+    tab-size:2; white-space:pre; overflow:auto;
+  }
+  body.light .codeArea textarea{background:#F7F9FB; color:#1B2430}
+  .codeHint{padding:8px 22px; font-size:11.5px; color:var(--dim); border-top:1px solid var(--line); background:var(--panel)}
 </style>
 </head>
 <body>
@@ -509,6 +530,7 @@
   </div>
   <button class="hbtn primary" id="addBtn">+ 추가</button>
   <button class="hbtn" id="stageBtn" title="현재 탭의 진행 단계 이름 변경">⚙ 단계명</button>
+  <button class="hbtn" id="codeBtn" title="HTML/CSS/JS 코드 직접 편집">&lt;/&gt; 코드 편집</button>
   <select class="hbtn" id="langSel" title="언어 / Language / 言語">
     <option value="ko">🌐 한국어</option>
     <option value="en">🌐 English</option>
@@ -604,6 +626,23 @@
   </div>
 </div>
 
+<!-- 코드 편집 오버레이 -->
+<div class="codeOverlay" id="codeOverlay">
+  <div class="codeBar">
+    <h2>&lt;/&gt; 코드 편집</h2>
+    <span class="status" id="codeStatus"></span>
+    <button class="hbtn" id="codeReloadBtn" title="현재 저장된 원본 코드 다시 불러오기">↻ 원본 불러오기</button>
+    <button class="hbtn" id="codePreviewBtn" title="수정한 코드를 새 탭에서 미리 실행">▶ 미리보기</button>
+    <button class="hbtn" id="codeApplyBtn" title="이 화면에만 즉시 적용">⚡ 이 화면 적용</button>
+    <button class="hbtn primary" id="codeApplyAllBtn" title="Firebase로 저장해 모든 화면에 실시간 적용">🌐 전체 실시간 적용</button>
+    <button class="hbtn" id="codeDownloadBtn" title="수정한 코드를 HTML 파일로 저장">⤓ 다운로드</button>
+    <button class="hbtn" id="codeRestoreBtn" title="전체 실시간 적용을 해제하고 원본 파일로 복구">♻ 전체 복구</button>
+    <button class="hbtn" id="codeCloseBtn">✕ 닫기</button>
+  </div>
+  <div class="codeArea"><textarea id="codeText" spellcheck="false" wrap="off"></textarea></div>
+  <div class="codeHint"><b>⚡ 이 화면 적용</b>: 지금 화면에만 즉시 반영 · <b>🌐 전체 실시간 적용</b>: 모든 접속 화면에 즉시 반영(새로고침 불필요) · <b>⤓ 다운로드</b>: 파일로 저장. &nbsp;⚠ 잘못된 코드로 화면이 멈추면 주소 끝에 <b>#safe</b>를 붙여 열면 원본으로 복구됩니다. (Tab 키 들여쓰기 지원)</div>
+</div>
+
 <script>
 /* ═══════════════════════════════════════════════════════════
    Firebase 설정 (실시간 공유용)
@@ -627,8 +666,7 @@ const firebaseConfig = {
       아래 목록과 보안 규칙의 목록을 반드시 동일하게 유지하세요.
 ═══════════════════════════════════════════════════════════ */
 const EDITORS = [
-  "sh.project.ai@gmail.com",
-  "kortoeng@gmail.com",
+  "sh.project.ai@gmail.com",            // ← 편집 담당자 이메일로 교체 (10명 이내 권장)
 ];
 
 let currentUser = null;   // 로그인 사용자
@@ -1096,15 +1134,9 @@ window.doGoogleLogin = async ()=>{
     err.textContent = '로그인 실패: ' + (e.message || e.code || '');
   }
 };
-function loadScript(src, timeoutMs){
+function loadScript(src){
   return new Promise((res,rej)=>{
-    const s=document.createElement('script');
-    let done=false;
-    const finish=(ok,err)=>{ if(done) return; done=true; clearTimeout(t); ok?res():rej(err||new Error('load error: '+src)); };
-    const t=setTimeout(()=>finish(false,new Error('timeout: '+src)), timeoutMs||15000);
-    s.src=src;
-    s.onload=()=>finish(true);
-    s.onerror=()=>finish(false);
+    const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej;
     document.head.appendChild(s);
   });
 }
@@ -1605,61 +1637,15 @@ window.onEdit = (id)=>{
 
 /* ════════ PO 파일(PDF/HTML) 자동 인식 ════════ */
 let pdfReady = false;
-/* pdf.js 로딩 — CDN 여러 곳을 순서대로 시도하고, 워커 실패 시 워커 없이 동작 */
-const PDFJS_SOURCES = [
-  { lib:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-    worker:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' },
-  { lib:'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
-    worker:'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
-  { lib:'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js',
-    worker:'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js' },
-];
-async function ensurePdfJs() {
-  if (pdfReady && window.pdfjsLib) return;
-  let lastErr = null;
-  for (const src of PDFJS_SOURCES) {
-    try {
-      if (!window.pdfjsLib) await loadScript(src.lib);
-      if (window.pdfjsLib) {
-        try {
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = src.worker;
-        } catch (e) {}
-        pdfReady = true;
-        return;
-      }
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  // CDN 로드 실패 시 대체 안내 추가
-  throw new Error('PDF 라이브러리를 불러올 수 없습니다. 인터넷 연결 상태 또는 CDN 차단 여부를 확인하세요.');
-}
-async function getPdfDoc(arrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer.slice(0));
-  // PDF.js에 한글 폰트 매핑(cMap) 옵션 추가
-  const params = {
-    data: bytes,
-    cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
-    cMapPacked: true
-  };
-  
-  try {
-    // 1차: 기본 워커 모드로 로드 시도
-    return await window.pdfjsLib.getDocument(params).promise;
-  } catch (e) {
-    console.warn('PDF Worker 모드 로드 실패, Worker 비활성화 모드로 재시도합니다:', e);
-    // 2차: 워커 차단 환경을 위한 disableWorker 옵션 적용
-    params.disableWorker = true;
-    params.isEvalSupported = false;
-    try {
-      return await window.pdfjsLib.getDocument(params).promise;
-    } catch (err) {
-      throw new Error('PDF 파싱 중 오류가 발생했습니다. (스캔된 이미지 형식의 PDF는 텍스트 추출이 불가합니다)');
-    }
-  }
+async function ensurePdfJs(){
+  if(pdfReady) return;
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  pdfReady = true;
 }
 async function pdfToLines(buf){
-  const pdf = await getPdfDoc(new Uint8Array(buf));   // ArrayBuffer 분리(detach) 방지
+  const pdf = await window.pdfjsLib.getDocument({data:buf}).promise;
   const lines = [];
   for(let pg=1; pg<=pdf.numPages; pg++){
     const page = await pdf.getPage(pg);
@@ -1746,12 +1732,10 @@ function extractHwRow(tables, lines){
   return {name:'', qty:0};
 }
 function extractPO(lineText, lines, tables){
-  // 영문 라벨 + 한국어/일본어 라벨 모두 인식
-  const poRe = /(?:purchase\s*order\s*no|p\/?o\s*no|order\s*no|발\s*주\s*번\s*호|주\s*문\s*번\s*호|PO\s*번호|注文番号)\.?\s*[:\-]?\s*([A-Za-z0-9][\w\-\/]*)/i;
-  const po = (lineText.match(poRe)||[])[1] || '';
-  const recv = parseDate(grab(lineText, '(?:date\\s*issued|issue\\s*date|order\\s*date|발\\s*행\\s*일|발\\s*주\\s*일|접\\s*수\\s*일|作成日|発行日)'));
-  const branch = grab(lineText, '(?:branch|지\\s*사|지\\s*점|담당\\s*지사|요청\\s*지사|支社|支店)');
-  const due = parseDate(grab(lineText, '(?:delivery\\s*time|delivery\\s*date|due\\s*date|납\\s*기\\s*일|납\\s*기|인\\s*도\\s*일|출하\\s*납기|納期)'));
+  const po = (lineText.match(/purchase\s*order\s*no\.?\s*[:\-]?\s*([A-Za-z0-9][\w\-\/]*)/i)||[])[1] || '';
+  const recv = parseDate(grab(lineText, 'date\\s*issued'));
+  const branch = grab(lineText, 'branch');
+  const due = parseDate(grab(lineText, 'delivery\\s*time'));
   const hw = extractHwRow(tables, lines);
   const hwItems = extractHwItems(lines, tables);
   return {po, recv, branch, due, name:hw.name, qty:hw.qty, hwItems};
@@ -1802,16 +1786,10 @@ window.onImportFile = async (e)=>{
   status.className = 'importStatus'; status.textContent = tr('파일 분석 중...');
   try{
     let lines=[], tables=[], lineText='';
-    if(/\.pdf$/i.test(file.name) || file.type === 'application/pdf'){
-      status.textContent = 'PDF ' + tr('파일 분석 중...');
+    if(/\.pdf$/i.test(file.name)){
       await ensurePdfJs();
       lines = await pdfToLines(await file.arrayBuffer());
       lineText = lines.join('\n');
-      if(!lines.length){
-        status.className='importStatus warn';
-        status.textContent = '⚠ PDF에서 텍스트를 찾을 수 없습니다.\n스캔(이미지)으로 만들어진 PDF는 자동 인식이 불가능합니다.\n원본 PDF를 사용하거나 직접 입력해 주세요.';
-        return;
-      }
     }else{
       const parsed = parseHtmlFile(await file.text());
       lines = parsed.lines; tables = parsed.tables; lineText = parsed.lineText;
@@ -1834,33 +1812,12 @@ window.onImportFile = async (e)=>{
       status.textContent = `✓ ${tr('자동 입력됨')}: ${done.join(', ')}\n${tr('(내용을 확인하고 필요 시 직접 수정하세요)')}`;
     }else{
       status.className='importStatus warn';
-      window._lastImportLines = lines;   // 진단용 보관
-      const preview = lines.slice(0,5).join('\n').slice(0,300);
-      status.innerHTML = '⚠ ' + esc(tr('인식된 항목이 없습니다. 파일 형식을 확인하거나 직접 입력하세요.'))
-        + `<br><br><b>파일에서 읽은 내용 (앞부분):</b><br>`
-        + `<span style="color:var(--sub);font-size:11px">${esc(preview)}…</span>`
-        + `<br><button type="button" class="hbtn" style="margin-top:8px;padding:6px 12px;font-size:11px"
-             onclick="showImportDump()">📋 읽은 내용 전체 보기 (복사용)</button>`;
+      status.textContent = '⚠ ' + tr('인식된 항목이 없습니다. 파일 형식을 확인하거나 직접 입력하세요.');
     }
   }catch(err){
     status.className='importStatus warn';
-    status.textContent = '⚠ ' + tr('분석 실패') + ': ' + (err && err.message ? err.message : err);
-    console.error('PO 파일 분석 오류:', err);
+    status.textContent = '⚠ ' + tr('분석 실패') + ': ' + err.message;
   }
-};
-/* 진단용: PDF/HTML에서 읽어들인 원문 전체 보기 */
-window.showImportDump = ()=>{
-  const lines = window._lastImportLines || [];
-  const w = window.open('', '_blank');
-  if(!w){ alert('팝업이 차단되었습니다. 팝업을 허용해 주세요.'); return; }
-  w.document.write('<meta charset="utf-8"><title>PO 파일 읽은 내용</title>'
-    + '<body style="font-family:monospace;background:#0E1319;color:#E8EDF2;padding:24px;line-height:1.6">'
-    + '<h3>PO 파일에서 읽어들인 내용 (' + lines.length + '줄)</h3>'
-    + '<p style="color:#8A97A6;font-size:13px">이 내용을 복사해서 전달해 주시면 인식 규칙을 맞춰드릴 수 있습니다.</p>'
-    + '<pre style="white-space:pre-wrap;background:#161E28;padding:16px;border-radius:8px">'
-    + lines.map((l,i)=>String(i).padStart(3,' ')+' | '+l.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))).join('\n')
-    + '</pre></body>');
-  w.document.close();
 };
 /* ════════════════════════════════════════════ */
 document.getElementById('addBtn').onclick=()=>{
@@ -2169,27 +2126,22 @@ document.getElementById('dateClear').onclick = ()=>{
    전체화면에서는 목록이 화면을 넘으면 천천히 아래로 스크롤되고,
    끝에 도달하면 잠시 멈춘 뒤 맨 위로 돌아가 반복합니다.
    일반 화면에서는 사용자가 직접 스크롤합니다. */
-//const SCROLL_SPEED = 0.6;      // 프레임당 이동 픽셀 (약 36px/초)
-//const PAUSE_END = 180;         // 끝 도달 후 대기 프레임 (~3초)
-//const PAUSE_TOP = 150;         // 맨 위 복귀 후 대기 프레임 (~2.5초)
-//let asPhase = 'top', asWait = PAUSE_TOP;
-let scrollAnimId = null;
-
+const SCROLL_SPEED = 0.6;      // 프레임당 이동 픽셀 (약 36px/초)
+const PAUSE_END = 180;         // 끝 도달 후 대기 프레임 (~3초)
+const PAUSE_TOP = 150;         // 맨 위 복귀 후 대기 프레임 (~2.5초)
+let asPhase = 'top', asWait = PAUSE_TOP;
 function autoScrollTick(){
   const board = document.getElementById('board');
   const isFs = document.body.classList.contains('fs');
-  
   if(isFs && !searchQ && board){
     const max = board.scrollHeight - board.clientHeight;
     if(max > 2){
-      if(asPhase === 'top'){
+      if(asPhase === 'top'){                       // 맨 위에서 잠시 대기
         if(--asWait <= 0) asPhase = 'scroll';
-      }else if(asPhase === 'scroll'){
+      }else if(asPhase === 'scroll'){              // 천천히 아래로
         board.scrollTop += SCROLL_SPEED;
-        if(board.scrollTop >= max - 1){
-          asPhase = 'end'; asWait = PAUSE_END;
-        }
-      }else if(asPhase === 'end'){
+        if(board.scrollTop >= max - 1){ asPhase = 'end'; asWait = PAUSE_END; }
+      }else if(asPhase === 'end'){                 // 끝에서 대기 후 맨 위로
         if(--asWait <= 0){
           board.scrollTo({top:0, behavior:'smooth'});
           asPhase = 'top'; asWait = PAUSE_TOP;
@@ -2198,27 +2150,13 @@ function autoScrollTick(){
     }else{
       board.scrollTop = 0; asPhase = 'top'; asWait = PAUSE_TOP;
     }
-    // 전체화면일 때만 다음 프레임 예약
-    scrollAnimId = requestAnimationFrame(autoScrollTick);
-  } else {
-    asPhase = 'top'; asWait = PAUSE_TOP;
-    cancelAnimationFrame(scrollAnimId);
-    scrollAnimId = null;
+  }else{
+    asPhase = 'top'; asWait = PAUSE_TOP;           // 일반 화면: 자동 스크롤 없음
   }
+  requestAnimationFrame(autoScrollTick);
 }
+requestAnimationFrame(autoScrollTick);
 
-// 기존 requestAnimationFrame(autoScrollTick); 호출 제거하고 이벤트에서 제어
-document.addEventListener('fullscreenchange',()=>{
-  const fs = !!document.fullscreenElement;
-  document.body.classList.toggle('fs', fs);
-  fsBtn.textContent = fs ? tr('⛶ 전체화면 해제') : tr('⛶ 전체화면');
-  
-  // 전체화면 진입 시에만 스크롤 애니메이션 시작
-  if (fs && !scrollAnimId) {
-    autoScrollTick();
-  }
-});
-  
 /* ── 한 화면 자동 맞춤 (해상도 대응) ── */
 function fitScreen(){
   // 세로형 카드 그리드는 스크롤로 표시하므로, 해상도(폭) 기준 배율만 적용
